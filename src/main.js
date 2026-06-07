@@ -246,6 +246,7 @@ applyMode();
 
 // ===================== Field view =====================
 const field = new Field($("field"), renderFieldReadout);
+window.__field = field; // exposed for the console / debugging
 
 function renderFieldReadout(s) {
   const r = s.robot;
