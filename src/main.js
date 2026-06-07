@@ -228,6 +228,7 @@ $("robotW").addEventListener("input", () => field.setRobotSize(Number($("robotW"
 $("robotL").addEventListener("input", () => field.setRobotSize(field.robot.w, Number($("robotL").value) || 18));
 $("heading").addEventListener("input", () => { field.setHeading(Number($("heading").value)); $("headingVal").textContent = $("heading").value + "°"; });
 $("snap").addEventListener("change", () => field.setSnap($("snap").checked));
+$("curve").addEventListener("change", () => field.setCurve($("curve").checked));
 $("clearPath").addEventListener("click", () => field.clearPoints());
 $("resetRobot").addEventListener("click", () => { field.resetRobot(); $("heading").value = 0; $("headingVal").textContent = "0°"; });
 $("copyPath").addEventListener("click", async () => {

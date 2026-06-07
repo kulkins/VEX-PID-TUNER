@@ -13,6 +13,7 @@ export class Field {
     this.robot = { x: 0, y: -48, heading: 0, w: 18, l: 18 };
     this.points = [];
     this.snap = false;
+    this.curve = false;
     this._drag = null; // {type:'robot'|'rotate'|'point', i, offX, offY, moved}
 
     canvas.addEventListener("pointerdown", (e) => this._down(e));
@@ -124,6 +125,7 @@ export class Field {
   setRobotSize(w, l) { this.robot.w = w; this.robot.l = l; this.draw(); this.onChange(this.state()); }
   setHeading(deg) { this.robot.heading = ((deg % 360) + 360) % 360; this.draw(); this.onChange(this.state()); }
   setSnap(on) { this.snap = on; }
+  setCurve(on) { this.curve = on; this.draw(); }
   clearPoints() { this.points = []; this.draw(); this.onChange(this.state()); }
   resetRobot() { this.robot.x = 0; this.robot.y = -48; this.robot.heading = 0; this.draw(); this.onChange(this.state()); }
   state() { return { robot: { ...this.robot }, points: this.points.map((p) => ({ ...p })) }; }
@@ -165,12 +167,14 @@ export class Field {
     // perimeter wall
     ctx.strokeStyle = "rgba(200,205,230,0.55)"; ctx.lineWidth = 4; ctx.strokeRect(x0, y0, px, px);
 
-    // path (polyline through robot start + waypoints)
+    // path through robot start + waypoints (straight segments or smooth spline)
     if (this.points.length) {
-      ctx.strokeStyle = "rgba(110,255,177,0.85)"; ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
+      const ctrl = [{ x: this.robot.x, y: this.robot.y }, ...this.points];
+      const linePts = this.curve ? catmullRom(ctrl, 18) : ctrl;
+      ctx.strokeStyle = "rgba(110,255,177,0.9)"; ctx.lineWidth = 2.4;
+      if (!this.curve) ctx.setLineDash([6, 4]);
       ctx.beginPath();
-      let p0 = this.toPx(this.robot.x, this.robot.y); ctx.moveTo(p0[0], p0[1]);
-      for (const p of this.points) { const q = this.toPx(p.x, p.y); ctx.lineTo(q[0], q[1]); }
+      linePts.forEach((p, i) => { const q = this.toPx(p.x, p.y); i === 0 ? ctx.moveTo(q[0], q[1]) : ctx.lineTo(q[0], q[1]); });
       ctx.stroke(); ctx.setLineDash([]);
       this.points.forEach((p, i) => {
         const q = this.toPx(p.x, p.y);
@@ -193,6 +197,26 @@ export class Field {
     ctx.moveTo(0, -l / 2 - 9); ctx.lineTo(-6, -l / 2); ctx.lineTo(6, -l / 2); ctx.closePath(); ctx.fill();
     ctx.restore();
   }
+}
+
+// Smooth path through control points (Catmull–Rom spline), sampled into a
+// polyline. Endpoints are duplicated so the curve passes through every point.
+function catmullRom(pts, seg = 18) {
+  if (pts.length < 3) return pts.slice();
+  const P = [pts[0], ...pts, pts[pts.length - 1]];
+  const out = [];
+  for (let i = 1; i < P.length - 2; i++) {
+    const p0 = P[i - 1], p1 = P[i], p2 = P[i + 1], p3 = P[i + 2];
+    for (let j = 0; j < seg; j++) {
+      const t = j / seg, t2 = t * t, t3 = t2 * t;
+      out.push({
+        x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
+        y: 0.5 * (2 * p1.y + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
+      });
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
 }
 
 function clamp(v) { return Math.max(-FIELD / 2, Math.min(FIELD / 2, v)); }
