@@ -57,10 +57,21 @@ src/main.js    UI wiring, Canvas chart, presets, code export, tab switching
 
 ## Field Planner
 
-A 12'×12' field (24" foam tiles) with a centre-origin coordinate grid (inches).
-Click to drop waypoints, drag the robot or any point to move it, drag the
-robot's nose to rotate, double-click a point to delete, and **Copy waypoints**
-to export the path as a C++ array. Snap-to-grid (6") optional.
+A 12'×12' field (24" foam tiles) with a centre-origin coordinate grid (inches),
+over a photo of the real game field. Click to drop waypoints, drag the robot or
+any point to move it, drag the robot's nose to rotate, double-click a point to
+delete, or type an exact **X / Y / heading (θ)** for the robot start and each
+waypoint. Snap-to-grid (6") optional.
+
+**Odometry toggle.** *Copy waypoints* exports the autonomous in the form your
+robot can actually run:
+
+- **Odometry on** — the robot tracks its absolute `(x, y, θ)` pose, so the export
+  is `setPose(...)` + `moveToPoint / moveToPose` calls to field coordinates
+  (LemLib / JAR / PID-to-point style).
+- **Odometry off** — open-loop *dead reckoning*: a relative **turn-then-drive**
+  sequence computed from the waypoint geometry, for robots with no tracking
+  wheels / position tracking.
 
 ## Run locally
 
@@ -76,8 +87,16 @@ npm run serve      # python3 -m http.server 8010
 Static — host anywhere. For GitHub Pages: push to a repo, then
 **Settings → Pages → Deploy from a branch → main / root**.
 
-## Caveats
+## How accurate is it?
 
-Educational simulation; a real drivetrain has effects this model omits (slip,
-battery sag, per-side dynamics). Use it to build intuition and a starting tune,
-then verify on the robot.
+It's **qualitatively** accurate, not quantitatively. The tuner is a first-order
+velocity plant with a friction deadband and loop delay — it reproduces the
+*behaviours* you tune against (rise/overshoot/settling, why kI removes
+steady-state error, why too much kP oscillates, what a Ziegler–Nichols tune looks
+like), so the **shapes and trade-offs transfer** to a real robot. The exact gain
+numbers do **not** transfer 1:1: a real drivetrain has mass/inertia, motor
+torque-speed curves, gear ratio, battery sag, wheel slip, and per-side dynamics
+this model doesn't know about. The field planner's follower is **kinematic**
+(geometry only — no slip or accumulated odom drift), so a path that's perfect
+here can still drift on a real robot, especially with odometry off. Use both to
+build intuition and a *starting* tune, then verify and fine-tune on the robot.

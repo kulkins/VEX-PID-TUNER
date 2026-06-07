@@ -347,14 +347,50 @@ function drawTrack() {
 }
 $("clearPath").addEventListener("click", () => field.clearPoints());
 $("resetRobot").addEventListener("click", () => { field.resetRobot(); $("heading").value = 0; $("headingVal").textContent = "0°"; });
+// Build the exported autonomous. WITH odometry the robot knows its absolute
+// (x, y, θ) pose, so we emit moveToPoint/moveToPose calls to field coordinates.
+// WITHOUT odometry it's dead reckoning — a relative turn + drive sequence the
+// robot executes open-loop (no global position), computed from the geometry.
+function buildPathCode(s, odom) {
+  const sx = round(s.robot.x), sy = round(s.robot.y), sh = Math.round(s.robot.heading);
+  if (!s.points.length) return "// No waypoints yet — click the field to add some.";
+  if (odom) {
+    const lines = s.points.map((p, i) =>
+      p.heading == null
+        ? `chassis.moveToPoint(${round(p.x)}, ${round(p.y)}, 2000);            // waypoint ${i + 1}`
+        : `chassis.moveToPose(${round(p.x)}, ${round(p.y)}, ${Math.round(p.heading)}, 2000);   // waypoint ${i + 1} @ ${Math.round(p.heading)}°`
+    ).join("\n");
+    return `// Autonomous — ODOMETRY ON (absolute field coords, inches; origin = centre, +y forward)\n` +
+      `chassis.setPose(${sx}, ${sy}, ${sh});\n${lines}`;
+  }
+  // No odometry: relative turn-then-drive from the start pose. turnFor(+) = clockwise.
+  let cx = s.robot.x, cy = s.robot.y, ch = s.robot.heading;
+  const out = [];
+  s.points.forEach((p, i) => {
+    const dx = p.x - cx, dy = p.y - cy, d = Math.hypot(dx, dy);
+    const tgt = ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
+    const turn = ((tgt - ch + 540) % 360) - 180;
+    out.push(`// → waypoint ${i + 1}  (${round(p.x)}, ${round(p.y)})`);
+    if (Math.abs(turn) > 0.5) out.push(`turnFor(${turn.toFixed(1)});      // face ${Math.round(tgt)}°`);
+    out.push(`driveFor(${d.toFixed(1)});`);
+    cx = p.x; cy = p.y; ch = tgt;
+    if (p.heading != null) {
+      const settle = ((p.heading - ch + 540) % 360) - 180;
+      if (Math.abs(settle) > 0.5) { out.push(`turnFor(${settle.toFixed(1)});      // settle to ${Math.round(p.heading)}°`); ch = p.heading; }
+    }
+  });
+  return `// Autonomous — NO ODOMETRY (open-loop dead reckoning, inches / degrees)\n` +
+    `// Start pose assumed: (${sx}, ${sy}) @ ${sh}°   ·   turnFor(+) = clockwise\n${out.join("\n")}`;
+}
+
 $("copyPath").addEventListener("click", async () => {
   const s = field.state();
-  const lines = s.points.map((p) => `  { ${p.x}, ${p.y} },`).join("\n");
-  const code = `// Autonomous waypoints (x, y) in inches — field-centre origin\n` +
-    `// Robot start: (${round(s.robot.x)}, ${round(s.robot.y)}) @ ${Math.round(s.robot.heading)}°\n` +
-    `double path[][2] = {\n${lines}\n};`;
-  try { await navigator.clipboard.writeText(code); toast(`Copied ${s.points.length} waypoint(s)`); }
-  catch { toast("Copy failed"); }
+  const odom = $("odom").checked;
+  const code = buildPathCode(s, odom);
+  try {
+    await navigator.clipboard.writeText(code);
+    toast(`Copied ${s.points.length} waypoint(s) · ${odom ? "odometry" : "dead-reckoning"}`);
+  } catch { toast("Copy failed"); }
 });
 
 // keep the field's heading slider in sync when the robot is rotated by dragging
