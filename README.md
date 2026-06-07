@@ -5,8 +5,12 @@ Two tools in one browser app, no robot required:
 1. **PID Tuner** — tune a drivetrain controller and watch the closed-loop
    response in real time.
 2. **Field Planner** — a top-down VEX V5 field with a coordinate grid, a
-   draggable/rotatable robot outline, and clickable waypoints for sketching an
-   autonomous route (exports the waypoints as code).
+   draggable/rotatable robot outline, and clickable waypoints (straight or
+   smooth curved paths). **Run path** drives the robot along the route with a
+   pure-pursuit follower and plots live **cross-track error**.
+
+The tuner exports gains in your template's format: **VEXcode V5**, **LemLib**,
+**JAR-Template**, or a generic PID struct.
 
 **▶ Live demo:** _deploy to GitHub Pages / Netlify (see below)_
 

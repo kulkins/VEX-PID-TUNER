@@ -48,6 +48,8 @@ export class Field {
 
   // ---- interaction ----
   _down(e) {
+    this.stopPath();
+    this.trail = null; // editing invalidates the last driven trail
     const [x, y] = this._evIn(e);
     // rotate handle (nose)?
     const nose = this._nose();
@@ -125,9 +127,57 @@ export class Field {
   setRobotSize(w, l) { this.robot.w = w; this.robot.l = l; this.draw(); this.onChange(this.state()); }
   setHeading(deg) { this.robot.heading = ((deg % 360) + 360) % 360; this.draw(); this.onChange(this.state()); }
   setSnap(on) { this.snap = on; }
-  setCurve(on) { this.curve = on; this.draw(); }
-  clearPoints() { this.points = []; this.draw(); this.onChange(this.state()); }
-  resetRobot() { this.robot.x = 0; this.robot.y = -48; this.robot.heading = 0; this.draw(); this.onChange(this.state()); }
+  setCurve(on) { this.curve = on; this.trail = null; this.draw(); }
+
+  // Drive the robot along the path with a pure-pursuit follower. Calls
+  // onFrame({t, cte}) each step (cross-track error) and onDone() at the end.
+  runPath(onFrame, onDone) {
+    this.stopPath();
+    if (!this.points.length) { onDone && onDone(); return; }
+    const ctrl = [{ x: this.robot.x, y: this.robot.y }, ...this.points];
+    const path = this.curve ? catmullRom(ctrl, 26) : densify(ctrl, 10);
+    const arc = [0];
+    for (let i = 1; i < path.length; i++) arc[i] = arc[i - 1] + dist(path[i - 1], path[i]);
+    const total = arc[arc.length - 1];
+
+    this.trail = [{ x: this.robot.x, y: this.robot.y }];
+    // Pure pursuit: a generous lookahead keeps steering smooth (no weaving).
+    const Ld = 20, vCruise = 38, Ksteer = 1.7, maxOmega = 200, dt = 0.02;
+    let t = 0, near = 0, done = false;
+
+    const step = () => {
+      for (let k = 0; k < 2; k++) { // 2 substeps/frame → smooth + brisk
+        while (near < path.length - 1 && dist(this.robot, path[near + 1]) < dist(this.robot, path[near])) near++;
+        const remaining = total - arc[near];
+        let li = near; while (li < path.length - 1 && arc[li] - arc[near] < Ld) li++;
+        const tgt = path[li];
+        const desired = deg(Math.atan2(tgt.x - this.robot.x, tgt.y - this.robot.y));
+        const he = ((desired - this.robot.heading + 540) % 360) - 180;
+        const omega = Math.max(-maxOmega, Math.min(maxOmega, Ksteer * he));
+        this.robot.heading = (this.robot.heading + omega * dt + 360) % 360;
+        let v = vCruise * Math.max(0.35, 1 - Math.abs(he) / 70); // slow for sharp turns
+        if (remaining < 22) v *= Math.max(0.04, remaining / 22); // ramp down at the end
+        this.robot.x += Math.sin(rad(this.robot.heading)) * v * dt;
+        this.robot.y += Math.cos(rad(this.robot.heading)) * v * dt;
+        t += dt;
+        // true cross-track error = distance to the nearest path SEGMENT
+        // (segment, not sample point, so there's no sampling sawtooth)
+        let cte = Infinity;
+        for (let j = 0; j < path.length - 1; j++) { const d = segDist(this.robot, path[j], path[j + 1]); if (d < cte) cte = d; }
+        this.trail.push({ x: this.robot.x, y: this.robot.y });
+        onFrame && onFrame({ t, cte });
+        if (remaining < 1.2 || t > 16) { done = true; break; }
+      }
+      this.draw();
+      if (done) { this._anim = null; this.onChange(this.state()); onDone && onDone(); }
+      else this._anim = requestAnimationFrame(step);
+    };
+    this._anim = requestAnimationFrame(step);
+  }
+  stopPath() { if (this._anim) { cancelAnimationFrame(this._anim); this._anim = null; } }
+  get running() { return !!this._anim; }
+  clearPoints() { this.stopPath(); this.points = []; this.trail = null; this.draw(); this.onChange(this.state()); }
+  resetRobot() { this.stopPath(); this.robot.x = 0; this.robot.y = -48; this.robot.heading = 0; this.trail = null; this.draw(); this.onChange(this.state()); }
   state() { return { robot: { ...this.robot }, points: this.points.map((p) => ({ ...p })) }; }
 
   // ---- rendering ----
@@ -186,6 +236,13 @@ export class Field {
       });
     }
 
+    // actual driven trail (from "Run path")
+    if (this.trail && this.trail.length > 1) {
+      ctx.strokeStyle = "#aab2ff"; ctx.lineWidth = 2.5; ctx.beginPath();
+      this.trail.forEach((p, i) => { const q = this.toPx(p.x, p.y); i === 0 ? ctx.moveTo(q[0], q[1]) : ctx.lineTo(q[0], q[1]); });
+      ctx.stroke();
+    }
+
     // robot
     const r = this.robot, t = rad(r.heading), [cx, cy] = this.toPx(r.x, r.y);
     ctx.save(); ctx.translate(cx, cy); ctx.rotate(t); // canvas y is down; heading from +y cw → rotate by t works with sin/cos below
@@ -216,6 +273,26 @@ function catmullRom(pts, seg = 18) {
     }
   }
   out.push(pts[pts.length - 1]);
+  return out;
+}
+
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+// Perpendicular distance from point p to segment a→b.
+function segDist(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy;
+  let t = L2 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+// Subdivide a polyline so arc-length lookahead is smooth on straight paths.
+function densify(pts, per = 8) {
+  if (pts.length < 2) return pts.slice();
+  const out = [{ ...pts[0] }];
+  for (let i = 1; i < pts.length; i++)
+    for (let j = 1; j <= per; j++) {
+      const t = j / per;
+      out.push({ x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t });
+    }
   return out;
 }
 

@@ -8,7 +8,7 @@ const els = {
   kPnum: $("kPnum"), kInum: $("kInum"), kDnum: $("kDnum"),
   noise: $("noise"), disturb: $("disturb"),
   autotune: $("autotune"), keep: $("keep"), reset: $("reset"), copy: $("copy"),
-  chart: $("chart"), metrics: $("metrics"), snippet: $("snippet"),
+  chart: $("chart"), metrics: $("metrics"), snippet: $("snippet"), template: $("template"),
 };
 
 const state = { mode: "drive", target: 24, kP: 0, kI: 0, kD: 0, noise: false, disturbance: false };
@@ -119,21 +119,20 @@ function renderMetrics(m, unit) {
   els.metrics.innerHTML = cards.map((c) => `<div class="metric ${c.cls}"><div class="label">${c.label}</div><div class="num">${c.val}</div></div>`).join("");
 }
 
-// ---- code snippet ----
-function renderSnippet() {
-  const cfg = MODES[state.mode];
-  const sensor = state.mode === "drive" ? "drivePositionInches()" : "headingDegrees()";
-  const cmd = state.mode === "drive" ? "setDrivePower(power)" : "setTurnPower(power)";
-  els.snippet.textContent =
-`// ${cfg.label} — tuned in VEX PID Tuner
-double kP = ${round(state.kP)}, kI = ${round(state.kI)}, kD = ${round(state.kD)};
-double target = ${state.target};            // ${cfg.unit}
+// ---- code snippet (multiple template formats) ----
+const SNIPPETS = {
+  vexcode(s, cfg, k) {
+    const sensor = s.mode === "drive" ? "drivePositionInches()" : "headingDegrees()";
+    const cmd = s.mode === "drive" ? "setDrivePower(power)" : "setTurnPower(power)";
+    return `// ${cfg.label} — VEXcode V5 (C++)
+double kP = ${k.kP}, kI = ${k.kI}, kD = ${k.kD};
+double target = ${s.target};            // ${cfg.unit}
 double error, integral = 0, derivative, lastError = 0;
 
 while (true) {
   error = target - ${sensor};
   integral += error;
-  if (fabs(error) < ${state.mode === "drive" ? "1.0" : "2.0"}) integral = 0;   // anti-windup near target
+  if (fabs(error) < ${s.mode === "drive" ? "1.0" : "2.0"}) integral = 0;   // anti-windup near target
   derivative = error - lastError;
 
   double power = kP * error + kI * integral + kD * derivative;
@@ -142,6 +141,51 @@ while (true) {
   lastError = error;
   wait(10, msec);
 }`;
+  },
+  lemlib(s, cfg, k) {
+    const drive = s.mode === "drive";
+    const name = drive ? "lateral_controller" : "angular_controller";
+    const sm = drive ? 1 : 1, lg = drive ? 3 : 3;
+    return `// LemLib — ${drive ? "lateral (drive)" : "angular (turn)"} controller settings (PROS)
+lemlib::ControllerSettings ${name}(
+    ${k.kP},   // kP
+    ${k.kI},   // kI
+    ${k.kD},   // kD
+    3,         // anti-windup range
+    ${sm}, 100,    // small error (${cfg.unit}), small-error timeout (ms)
+    ${lg}, 500,    // large error (${cfg.unit}), large-error timeout (ms)
+    20         // slew rate (max accel)
+);`;
+  },
+  jar(s, cfg, k) {
+    const p = s.mode === "drive" ? "drive" : "turn";
+    return `// JAR-Template — ${p} PID constants (set in your chassis config)
+float ${p}_kp = ${k.kP};
+float ${p}_ki = ${k.kI};
+float ${p}_kd = ${k.kD};
+float ${p}_starti = 0;            // error at which to start integrating
+float ${p}_settle_error = ${s.mode === "drive" ? "1.0" : "2.0"};   // ${cfg.unit}
+float ${p}_settle_time = 300;     // ms
+float ${p}_timeout = 5000;        // ms`;
+  },
+  rw(s, cfg, k) {
+    return `// Generic PID — ${cfg.label}
+struct PIDGains { double kP, kI, kD; };
+PIDGains ${s.mode}Gains = { ${k.kP}, ${k.kI}, ${k.kD} };
+
+// loop @ 10 ms:
+//   error      = target - sensor;          // ${cfg.unit}
+//   integral  += error * dt;               // + anti-windup
+//   derivative = (error - lastError) / dt;
+//   output     = kP*error + kI*integral + kD*derivative;`;
+  },
+};
+
+function renderSnippet() {
+  const cfg = MODES[state.mode];
+  const k = { kP: round(state.kP), kI: round(state.kI), kD: round(state.kD) };
+  const tpl = (els.template && els.template.value) || "vexcode";
+  els.snippet.textContent = (SNIPPETS[tpl] || SNIPPETS.vexcode)(state, cfg, k);
 }
 
 // ---- main update ----
@@ -184,6 +228,7 @@ document.querySelectorAll("[data-preset]").forEach((b) =>
 );
 els.keep.addEventListener("click", () => { keptRun = simulate({ mode: state.mode, kP: state.kP, kI: state.kI, kD: state.kD, target: state.target }); update(); toast("Kept current run for comparison"); });
 els.reset.addEventListener("click", () => applyMode());
+els.template.addEventListener("change", renderSnippet);
 els.copy.addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(els.snippet.textContent); toast("PID code copied to clipboard"); }
   catch { toast("Copy failed — select the code manually"); }
@@ -229,6 +274,40 @@ $("robotL").addEventListener("input", () => field.setRobotSize(field.robot.w, Nu
 $("heading").addEventListener("input", () => { field.setHeading(Number($("heading").value)); $("headingVal").textContent = $("heading").value + "°"; });
 $("snap").addEventListener("change", () => field.setSnap($("snap").checked));
 $("curve").addEventListener("change", () => field.setCurve($("curve").checked));
+
+// Run the path: animate the robot following it + plot cross-track error.
+let trackData = [];
+$("runPath").addEventListener("click", () => {
+  if (field.running) { field.stopPath(); $("runPath").textContent = "▶ Run path"; return; }
+  trackData = [];
+  $("runPath").textContent = "■ Stop";
+  field.runPath(
+    (f) => { trackData.push(f); drawTrack(); },
+    () => {
+      $("runPath").textContent = "▶ Run path";
+      const maxC = trackData.reduce((m, d) => Math.max(m, d.cte), 0);
+      $("trackVal").textContent = trackData.length ? `peak ${maxC.toFixed(1)} in · final ${trackData[trackData.length - 1].cte.toFixed(1)} in` : "";
+    }
+  );
+});
+
+function drawTrack() {
+  const c = $("trackChart"), ctx = c.getContext("2d");
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = c.clientWidth, H = c.clientHeight;
+  c.width = W * dpr; c.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const mL = 34, mB = 16, mT = 6, mR = 8, pw = W - mL - mR, ph = H - mT - mB;
+  const tMax = Math.max(2, trackData.length ? trackData[trackData.length - 1].t : 2);
+  const cMax = Math.max(2, ...trackData.map((d) => d.cte));
+  ctx.strokeStyle = "rgba(255,255,255,0.07)"; ctx.fillStyle = "#9b9cc6"; ctx.font = "10px system-ui";
+  for (let g = 0; g <= 2; g++) { const v = (g / 2) * cMax, y = mT + ph - (v / cMax) * ph; ctx.beginPath(); ctx.moveTo(mL, y); ctx.lineTo(W - mR, y); ctx.stroke(); ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText(v.toFixed(1), mL - 5, y); }
+  ctx.textAlign = "left"; ctx.textBaseline = "bottom"; ctx.fillText("in", 4, mT + 10);
+  ctx.textAlign = "right"; ctx.textBaseline = "bottom"; ctx.fillText(tMax.toFixed(1) + "s", W - mR, H);
+  ctx.strokeStyle = "#6effb1"; ctx.lineWidth = 2; ctx.beginPath();
+  trackData.forEach((d, i) => { const x = mL + (d.t / tMax) * pw, y = mT + ph - (Math.min(d.cte, cMax) / cMax) * ph; i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+  ctx.stroke();
+}
 $("clearPath").addEventListener("click", () => field.clearPoints());
 $("resetRobot").addEventListener("click", () => { field.resetRobot(); $("heading").value = 0; $("headingVal").textContent = "0°"; });
 $("copyPath").addEventListener("click", async () => {

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>VEX PID Tuner + Field Planner</title>
-    <link rel="stylesheet" href="./style.css?v=2" />
+    <link rel="stylesheet" href="./style.css?v=4" />
   </head>
   <body>
     <header class="topbar">
@@ -62,7 +62,15 @@
         <div class="chart-wrap"><canvas id="chart"></canvas></div>
         <div class="metrics" id="metrics"></div>
         <div class="code">
-          <div class="code-head"><span>Drop-in PID (VEXcode V5 C++)</span><button class="btn small" id="copy">Copy code</button></div>
+          <div class="code-head">
+            <select id="template" class="mini-select">
+              <option value="vexcode">VEXcode V5 (C++)</option>
+              <option value="lemlib">LemLib (PROS)</option>
+              <option value="jar">JAR-Template</option>
+              <option value="rw">RW / generic</option>
+            </select>
+            <button class="btn small" id="copy">Copy code</button>
+          </div>
           <pre id="snippet"></pre>
         </div>
       </section>
@@ -87,9 +95,10 @@
           <label class="toggle"><input type="checkbox" id="snap" /><span>Snap to grid (6")</span></label>
         </div>
         <div class="buttons">
+          <button class="btn primary" id="runPath">▶ Run path</button>
           <button class="btn" id="clearPath">Clear path</button>
           <button class="btn ghost" id="resetRobot">Reset robot</button>
-          <button class="btn primary" id="copyPath">Copy waypoints</button>
+          <button class="btn" id="copyPath">Copy waypoints</button>
         </div>
         <div class="hint muted small">
           Click the field to add a waypoint · drag a point or the robot to move ·
@@ -100,6 +109,10 @@
 
       <section class="stage">
         <div class="field-wrap"><canvas id="field"></canvas></div>
+        <div class="track">
+          <div class="track-head"><span>Path tracking — cross-track error</span><span id="trackVal" class="muted small"></span></div>
+          <canvas id="trackChart"></canvas>
+        </div>
       </section>
     </main>
 
