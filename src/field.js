@@ -15,11 +15,19 @@ export class Field {
     this.ctx = canvas.getContext("2d");
     this.onChange = onChange || (() => {});
     this.robot = { x: 0, y: -48, heading: 0, w: 18, l: 18 };
-    this.points = []; // {x, y, hx, hy, custom}
+    this.points = []; // {x, y, hx, hy, custom, heading}  (heading: null = auto/unconstrained)
     this.snap = false;
     this.curve = false;
     this.trail = null;
     this._drag = null;
+
+    // Optional real game-field background (drop a field.png in the project).
+    this.showField = true;
+    this.bgReady = false;
+    this.bgImg = new Image();
+    this.bgImg.onload = () => { this.bgReady = true; this.draw(); };
+    this.bgImg.onerror = () => { this.bgReady = false; };
+    this.bgImg.src = "./field.png";
 
     canvas.addEventListener("pointerdown", (e) => this._down(e));
     canvas.addEventListener("pointermove", (e) => this._move(e));
@@ -124,7 +132,7 @@ export class Field {
   _up() {
     const d = this._drag; this._drag = null;
     if (d && d.type === "add" && !d.moved) {
-      this.points.push({ x: clamp(this._snap(d.x)), y: clamp(this._snap(d.y)), hx: 0, hy: 0, custom: false });
+      this.points.push({ x: clamp(this._snap(d.x)), y: clamp(this._snap(d.y)), hx: 0, hy: 0, custom: false, heading: null });
       this.recomputeAutoHandles();
       this.draw(); this.onChange(this.state());
     }
@@ -148,10 +156,31 @@ export class Field {
   setRobotSize(w, l) { this.robot.w = w; this.robot.l = l; this.draw(); this.onChange(this.state()); }
   setHeading(d) { this.robot.heading = ((d % 360) + 360) % 360; this.draw(); this.onChange(this.state()); }
   setSnap(on) { this.snap = on; }
+  setShowField(on) { this.showField = on; this.draw(); }
   setCurve(on) { this.curve = on; this.trail = null; if (on) this.recomputeAutoHandles(); this.draw(); }
   clearPoints() { this.stopPath(); this.points = []; this.trail = null; this.draw(); this.onChange(this.state()); }
   resetRobot() { this.stopPath(); this.robot.x = 0; this.robot.y = -48; this.robot.heading = 0; this.trail = null; this.recomputeAutoHandles(); this.draw(); this.onChange(this.state()); }
-  state() { return { robot: { ...this.robot }, points: this.points.map((p) => ({ x: p.x, y: p.y })) }; }
+  state() { return { robot: { ...this.robot }, points: this.points.map((p) => ({ x: p.x, y: p.y, heading: p.heading })) }; }
+
+  // Edit a single waypoint's coordinate or heading from the readout inputs.
+  // Does NOT fire onChange so the inputs aren't rebuilt while you're typing.
+  updatePoint(i, key, val) {
+    const p = this.points[i]; if (!p) return;
+    if (key === "heading") {
+      p.heading = (val == null || val === "" || Number.isNaN(val)) ? null : (((val % 360) + 360) % 360);
+    } else if (key === "x" || key === "y") {
+      if (Number.isNaN(val)) return;
+      p[key] = clamp(val); this.recomputeAutoHandles();
+    }
+    this.draw();
+  }
+  // Edit the robot's start pose from the readout inputs (same no-rebuild contract).
+  setRobotPose({ x, y, heading } = {}) {
+    if (x != null && !Number.isNaN(x)) this.robot.x = clamp(x);
+    if (y != null && !Number.isNaN(y)) this.robot.y = clamp(y);
+    if (heading != null && !Number.isNaN(heading)) this.robot.heading = ((heading % 360) + 360) % 360;
+    this.recomputeAutoHandles(); this.draw();
+  }
 
   // ---- run path (pure-pursuit follower) ----
   runPath(onFrame, onDone) {
@@ -205,13 +234,23 @@ export class Field {
     const [x0, y0] = this.toPx(-FIELD / 2, FIELD / 2);
     const px = this.span;
 
-    ctx.fillStyle = "#13131f"; ctx.fillRect(x0, y0, px, px);
-    for (let r = 0; r < 6; r++) for (let col = 0; col < 6; col++) {
-      ctx.fillStyle = (r + col) % 2 ? "rgba(170,178,255,0.05)" : "rgba(170,178,255,0.02)";
-      ctx.fillRect(x0 + (col * px) / 6, y0 + (r * px) / 6, px / 6, px / 6);
+    const useImg = this.showField && this.bgReady;
+    if (useImg) {
+      ctx.drawImage(this.bgImg, x0, y0, px, px); // real game field
+    } else {
+      ctx.fillStyle = "#13131f"; ctx.fillRect(x0, y0, px, px);
+      for (let r = 0; r < 6; r++) for (let col = 0; col < 6; col++) {
+        ctx.fillStyle = (r + col) % 2 ? "rgba(170,178,255,0.05)" : "rgba(170,178,255,0.02)";
+        ctx.fillRect(x0 + (col * px) / 6, y0 + (r * px) / 6, px / 6, px / 6);
+      }
     }
+    // coordinate grid (fainter over the field photo so it stays readable)
     for (let g = -FIELD / 2; g <= FIELD / 2 + 0.1; g += 12) {
-      ctx.strokeStyle = Math.abs(g % TILE) < 0.1 ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.05)"; ctx.lineWidth = 1;
+      const tile = Math.abs(g % TILE) < 0.1;
+      ctx.strokeStyle = useImg
+        ? (tile ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.06)")
+        : (tile ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.05)");
+      ctx.lineWidth = 1;
       let p = this.toPx(g, FIELD / 2); ctx.beginPath(); ctx.moveTo(p[0], p[1]); p = this.toPx(g, -FIELD / 2); ctx.lineTo(p[0], p[1]); ctx.stroke();
       p = this.toPx(-FIELD / 2, g); ctx.beginPath(); ctx.moveTo(p[0], p[1]); p = this.toPx(FIELD / 2, g); ctx.lineTo(p[0], p[1]); ctx.stroke();
     }
@@ -222,7 +261,7 @@ export class Field {
     for (let g = -72; g <= 72; g += 24) { if (g) { const p = this.toPx(g, 0); ctx.fillText(g, p[0], p[1] + 3); } }
     ctx.textAlign = "left"; ctx.textBaseline = "middle";
     for (let g = -72; g <= 72; g += 24) { if (g) { const p = this.toPx(0, g); ctx.fillText(g, p[0] + 3, p[1]); } }
-    ctx.strokeStyle = "rgba(200,205,230,0.55)"; ctx.lineWidth = 4; ctx.strokeRect(x0, y0, px, px);
+    if (!useImg) { ctx.strokeStyle = "rgba(200,205,230,0.55)"; ctx.lineWidth = 4; ctx.strokeRect(x0, y0, px, px); }
 
     // path
     if (this.points.length) {
@@ -242,6 +281,19 @@ export class Field {
       // waypoint dots + labels
       this.points.forEach((p, i) => {
         const q = this.toPx(p.x, p.y);
+        // per-waypoint heading arrow (only when a heading is set)
+        if (p.heading != null) {
+          const t = rad(p.heading);
+          const e = this.toPx(p.x + Math.sin(t) * 13, p.y + Math.cos(t) * 13);
+          const ang = Math.atan2(e[1] - q[1], e[0] - q[0]);
+          ctx.strokeStyle = "#ffd76e"; ctx.lineWidth = 2.2;
+          ctx.beginPath(); ctx.moveTo(q[0], q[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+          ctx.fillStyle = "#ffd76e"; ctx.beginPath();
+          ctx.moveTo(e[0], e[1]);
+          ctx.lineTo(e[0] - 7 * Math.cos(ang - 0.45), e[1] - 7 * Math.sin(ang - 0.45));
+          ctx.lineTo(e[0] - 7 * Math.cos(ang + 0.45), e[1] - 7 * Math.sin(ang + 0.45));
+          ctx.closePath(); ctx.fill();
+        }
         ctx.fillStyle = "#6effb1"; ctx.beginPath(); ctx.arc(q[0], q[1], 6, 0, 7); ctx.fill();
         ctx.fillStyle = "#07120c"; ctx.font = "bold 9px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(i + 1, q[0], q[1]);
         ctx.fillStyle = "#cdd3e6"; ctx.font = "10px system-ui"; ctx.textBaseline = "bottom"; ctx.fillText(`(${fmt(p.x)}, ${fmt(p.y)})`, q[0], q[1] - 8);

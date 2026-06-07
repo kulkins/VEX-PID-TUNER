@@ -249,11 +249,47 @@ window.__field = field; // exposed for the console / debugging
 
 function renderFieldReadout(s) {
   const r = s.robot;
-  const pts = s.points.map((p, i) => `<div class="wp"><span>${i + 1}</span> (${p.x}, ${p.y})</div>`).join("") ||
+  const rows = s.points.map((p, i) => `
+    <div class="wp-edit" data-i="${i}">
+      <span class="wp-num">${i + 1}</span>
+      <label>X<input type="number" step="1" data-k="x" value="${round(p.x)}" /></label>
+      <label>Y<input type="number" step="1" data-k="y" value="${round(p.y)}" /></label>
+      <label>θ<input type="number" step="5" data-k="heading" placeholder="auto" value="${p.heading == null ? "" : Math.round(p.heading)}" /></label>
+    </div>`).join("") ||
     `<div class="muted small">No waypoints yet — click the field to add one.</div>`;
   $("fieldReadout").innerHTML =
-    `<div class="pose">Robot: <b>(${round(r.x)}, ${round(r.y)})</b> @ <b>${Math.round(r.heading)}°</b></div>
-     <div class="wps">${pts}</div>`;
+    `<div class="wp-edit robot-row">
+       <span class="wp-num bot">R</span>
+       <label>X<input type="number" step="1" data-rk="x" value="${round(r.x)}" /></label>
+       <label>Y<input type="number" step="1" data-rk="y" value="${round(r.y)}" /></label>
+       <label>θ<input type="number" step="5" data-rk="heading" value="${Math.round(r.heading)}" /></label>
+     </div>
+     <div class="wps">${rows}</div>`;
+  wireReadoutInputs();
+}
+
+// Wire the editable coordinate/heading inputs. Inputs fire on "change" (blur /
+// Enter) and call field methods that redraw without rebuilding the list, so an
+// edit in one field never yanks focus out of the one you're typing in.
+function wireReadoutInputs() {
+  $("fieldReadout").querySelectorAll(".wp-edit[data-i] input").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const i = Number(inp.closest(".wp-edit").dataset.i);
+      const k = inp.dataset.k;
+      const raw = inp.value.trim();
+      field.updatePoint(i, k, k === "heading" && raw === "" ? null : Number(raw));
+    });
+  });
+  $("fieldReadout").querySelectorAll(".robot-row input").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const k = inp.dataset.rk;
+      field.setRobotPose({ [k]: Number(inp.value) });
+      if (k === "heading") {
+        $("heading").value = Math.round(field.robot.heading);
+        $("headingVal").textContent = Math.round(field.robot.heading) + "°";
+      }
+    });
+  });
 }
 
 // tabs
@@ -274,6 +310,7 @@ $("robotL").addEventListener("input", () => field.setRobotSize(field.robot.w, Nu
 $("heading").addEventListener("input", () => { field.setHeading(Number($("heading").value)); $("headingVal").textContent = $("heading").value + "°"; });
 $("snap").addEventListener("change", () => field.setSnap($("snap").checked));
 $("curve").addEventListener("change", () => field.setCurve($("curve").checked));
+$("showField").addEventListener("change", () => field.setShowField($("showField").checked));
 
 // Run the path: animate the robot following it + plot cross-track error.
 let trackData = [];
