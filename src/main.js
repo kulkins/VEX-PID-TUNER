@@ -169,15 +169,14 @@ float ${p}_settle_time = 300;     // ms
 float ${p}_timeout = 5000;        // ms`;
   },
   rw(s, cfg, k) {
-    return `// Generic PID — ${cfg.label}
-struct PIDGains { double kP, kI, kD; };
-PIDGains ${s.mode}Gains = { ${k.kP}, ${k.kI}, ${k.kD} };
-
-// loop @ 10 ms:
-//   error      = target - sensor;          // ${cfg.unit}
-//   integral  += error * dt;               // + anti-windup
-//   derivative = (error - lastError) / dt;
-//   output     = kP*error + kI*integral + kD*derivative;`;
+    // RW-Template (richardbwang/RW-Template) — gains live in
+    // custom/src/robot-config.cpp as global doubles.
+    return s.mode === "drive"
+      ? `// RW-Template — linear (drive) PID  ·  custom/src/robot-config.cpp
+double distance_kp = ${k.kP}, distance_ki = ${k.kI}, distance_kd = ${k.kD};
+// (heading_correction_* keeps the robot straight while driving)`
+      : `// RW-Template — turn PID  ·  custom/src/robot-config.cpp
+double turn_kp = ${k.kP}, turn_ki = ${k.kI}, turn_kd = ${k.kD};`;
   },
 };
 
