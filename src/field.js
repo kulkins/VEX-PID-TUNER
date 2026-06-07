@@ -155,7 +155,9 @@ export class Field {
         const he = ((desired - this.robot.heading + 540) % 360) - 180;
         const omega = Math.max(-maxOmega, Math.min(maxOmega, Ksteer * he));
         this.robot.heading = (this.robot.heading + omega * dt + 360) % 360;
-        let v = vCruise * Math.max(0.35, 1 - Math.abs(he) / 70); // slow for sharp turns
+        // Forward speed scales down with heading error; for large errors the
+        // robot point-turns in place (v≈0) instead of looping around.
+        let v = vCruise * Math.max(0, 1 - Math.abs(he) / 55);
         if (remaining < 22) v *= Math.max(0.04, remaining / 22); // ramp down at the end
         this.robot.x += Math.sin(rad(this.robot.heading)) * v * dt;
         this.robot.y += Math.cos(rad(this.robot.heading)) * v * dt;
