@@ -134,6 +134,7 @@ export class Field {
   runPath(onFrame, onDone) {
     this.stopPath();
     if (!this.points.length) { onDone && onDone(); return; }
+    const start = { x: this.robot.x, y: this.robot.y, heading: this.robot.heading };
     const ctrl = [{ x: this.robot.x, y: this.robot.y }, ...this.points];
     const path = this.curve ? catmullRom(ctrl, 26) : densify(ctrl, 10);
     const arc = [0];
@@ -170,9 +171,18 @@ export class Field {
         onFrame && onFrame({ t, cte });
         if (remaining < 1.2 || t > 16) { done = true; break; }
       }
-      this.draw();
-      if (done) { this._anim = null; this.onChange(this.state()); onDone && onDone(); }
-      else this._anim = requestAnimationFrame(step);
+      if (done) {
+        this._anim = null;
+        // Snap back to the starting pose so the planned path + every re-run stay
+        // anchored to the original start (the driven trail stays visible).
+        this.robot.x = start.x; this.robot.y = start.y; this.robot.heading = start.heading;
+        this.draw();
+        this.onChange(this.state());
+        onDone && onDone();
+      } else {
+        this.draw();
+        this._anim = requestAnimationFrame(step);
+      }
     };
     this._anim = requestAnimationFrame(step);
   }
