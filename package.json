@@ -1,0 +1,11 @@
+{
+  "name": "vex-pid-sim",
+  "version": "1.0.0",
+  "description": "Interactive PID tuning simulator for VEX drivetrains.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "serve": "python3 -m http.server 8010"
+  },
+  "license": "ISC"
+}

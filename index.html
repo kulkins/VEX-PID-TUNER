@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VEX PID Tuner — drivetrain simulator</title>
+    <link rel="stylesheet" href="./style.css?v=1" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">∿</span>
+        <div>
+          <h1>VEX PID Tuner</h1>
+          <p>Tune a drivetrain controller and watch the response — no robot required.</p>
+        </div>
+      </div>
+      <label class="control">
+        <span>Mechanism</span>
+        <select id="mode">
+          <option value="drive" selected>Drive to distance</option>
+          <option value="turn">Turn to heading</option>
+        </select>
+      </label>
+    </header>
+
+    <main class="app">
+      <aside class="panel">
+        <div class="group">
+          <div class="group-head">
+            <label for="target">Target</label>
+            <span id="targetVal" class="val">24 in</span>
+          </div>
+          <input type="range" id="target" />
+        </div>
+
+        <div class="gains">
+          <div class="gain" data-k="kP">
+            <div class="group-head"><label>kP <span class="muted">proportional</span></label><input type="number" id="kPnum" step="0.0001" /></div>
+            <input type="range" id="kP" />
+          </div>
+          <div class="gain" data-k="kI">
+            <div class="group-head"><label>kI <span class="muted">integral</span></label><input type="number" id="kInum" step="0.0001" /></div>
+            <input type="range" id="kI" />
+          </div>
+          <div class="gain" data-k="kD">
+            <div class="group-head"><label>kD <span class="muted">derivative</span></label><input type="number" id="kDnum" step="0.0001" /></div>
+            <input type="range" id="kD" />
+          </div>
+        </div>
+
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" id="noise" /><span>Sensor noise</span></label>
+          <label class="toggle"><input type="checkbox" id="disturb" /><span>Disturbance (a shove)</span></label>
+        </div>
+
+        <div class="buttons">
+          <button class="btn primary" id="autotune">⚡ Auto-tune</button>
+          <button class="btn" data-preset="smooth">Smooth</button>
+          <button class="btn" data-preset="aggressive">Aggressive</button>
+          <button class="btn" data-preset="zn">Ziegler–Nichols</button>
+          <button class="btn" id="keep">Keep run (compare)</button>
+          <button class="btn ghost" id="reset">Reset</button>
+        </div>
+      </aside>
+
+      <section class="stage">
+        <div class="chart-wrap"><canvas id="chart"></canvas></div>
+
+        <div class="metrics" id="metrics"></div>
+
+        <div class="code">
+          <div class="code-head">
+            <span>Drop-in PID (VEXcode V5 C++)</span>
+            <button class="btn small" id="copy">Copy code</button>
+          </div>
+          <pre id="snippet"></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span class="muted small">Educational simulation — a simplified model; real robots vary. Built with vanilla JS + Canvas.</span>
+    </footer>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
