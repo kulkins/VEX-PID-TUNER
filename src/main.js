@@ -1,4 +1,5 @@
 import { MODES, simulate, metrics, autoTune, preset, DT } from "./sim.js";
+import { Field } from "./field.js";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -197,3 +198,48 @@ function toast(msg) {
 }
 
 applyMode();
+
+// ===================== Field view =====================
+const field = new Field($("field"), renderFieldReadout);
+
+function renderFieldReadout(s) {
+  const r = s.robot;
+  const pts = s.points.map((p, i) => `<div class="wp"><span>${i + 1}</span> (${p.x}, ${p.y})</div>`).join("") ||
+    `<div class="muted small">No waypoints yet — click the field to add one.</div>`;
+  $("fieldReadout").innerHTML =
+    `<div class="pose">Robot: <b>(${round(r.x)}, ${round(r.y)})</b> @ <b>${Math.round(r.heading)}°</b></div>
+     <div class="wps">${pts}</div>`;
+}
+
+// tabs
+document.querySelectorAll(".tab").forEach((tab) =>
+  tab.addEventListener("click", () => {
+    const v = tab.dataset.view;
+    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
+    $("tunerView").hidden = v !== "tuner";
+    $("fieldView").hidden = v !== "field";
+    if (v === "field") field.resize(); // canvas needs a real size once visible
+    else update();
+  })
+);
+
+// field controls
+$("robotW").addEventListener("input", () => field.setRobotSize(Number($("robotW").value) || 18, field.robot.l));
+$("robotL").addEventListener("input", () => field.setRobotSize(field.robot.w, Number($("robotL").value) || 18));
+$("heading").addEventListener("input", () => { field.setHeading(Number($("heading").value)); $("headingVal").textContent = $("heading").value + "°"; });
+$("snap").addEventListener("change", () => field.setSnap($("snap").checked));
+$("clearPath").addEventListener("click", () => field.clearPoints());
+$("resetRobot").addEventListener("click", () => { field.resetRobot(); $("heading").value = 0; $("headingVal").textContent = "0°"; });
+$("copyPath").addEventListener("click", async () => {
+  const s = field.state();
+  const lines = s.points.map((p) => `  { ${p.x}, ${p.y} },`).join("\n");
+  const code = `// Autonomous waypoints (x, y) in inches — field-centre origin\n` +
+    `// Robot start: (${round(s.robot.x)}, ${round(s.robot.y)}) @ ${Math.round(s.robot.heading)}°\n` +
+    `double path[][2] = {\n${lines}\n};`;
+  try { await navigator.clipboard.writeText(code); toast(`Copied ${s.points.length} waypoint(s)`); }
+  catch { toast("Copy failed"); }
+});
+
+// keep the field's heading slider in sync when the robot is rotated by dragging
+const origRender = renderFieldReadout;
+field.onChange = (s) => { origRender(s); $("heading").value = Math.round(s.robot.heading); $("headingVal").textContent = Math.round(s.robot.heading) + "°"; };

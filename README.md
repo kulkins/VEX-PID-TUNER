@@ -1,7 +1,12 @@
-# VEX PID Tuner
+# VEX PID Tuner + Field Planner
 
-An interactive **PID tuning simulator for VEX drivetrains** — tune a controller
-and watch the closed-loop response in real time, no robot required.
+Two tools in one browser app, no robot required:
+
+1. **PID Tuner** — tune a drivetrain controller and watch the closed-loop
+   response in real time.
+2. **Field Planner** — a top-down VEX V5 field with a coordinate grid, a
+   draggable/rotatable robot outline, and clickable waypoints for sketching an
+   autonomous route (exports the waypoints as code).
 
 **▶ Live demo:** _deploy to GitHub Pages / Netlify (see below)_
 
@@ -39,11 +44,19 @@ tune against on a VEX robot.
 ## Project layout
 
 ```
-index.html     Page shell
+index.html     Page shell (Tuner / Field tabs)
 style.css      Theme + layout
 src/sim.js     Physics + PID + metrics + auto-tune + Ziegler–Nichols (pure, testable)
-src/main.js    UI, Canvas chart, presets, code export
+src/field.js   Top-down field: coordinate grid, robot outline, waypoint path
+src/main.js    UI wiring, Canvas chart, presets, code export, tab switching
 ```
+
+## Field Planner
+
+A 12'×12' field (24" foam tiles) with a centre-origin coordinate grid (inches).
+Click to drop waypoints, drag the robot or any point to move it, drag the
+robot's nose to rotate, double-click a point to delete, and **Copy waypoints**
+to export the path as a C++ array. Snap-to-grid (6") optional.
 
 ## Run locally
 

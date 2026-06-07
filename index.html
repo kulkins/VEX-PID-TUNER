@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>VEX PID Tuner — drivetrain simulator</title>
-    <link rel="stylesheet" href="./style.css?v=1" />
+    <title>VEX PID Tuner + Field Planner</title>
+    <link rel="stylesheet" href="./style.css?v=2" />
   </head>
   <body>
     <header class="topbar">
@@ -12,41 +12,35 @@
         <span class="logo" aria-hidden="true">∿</span>
         <div>
           <h1>VEX PID Tuner</h1>
-          <p>Tune a drivetrain controller and watch the response — no robot required.</p>
+          <p>Tune a drivetrain controller and plan autonomous paths — no robot required.</p>
         </div>
       </div>
-      <label class="control">
-        <span>Mechanism</span>
-        <select id="mode">
-          <option value="drive" selected>Drive to distance</option>
-          <option value="turn">Turn to heading</option>
-        </select>
-      </label>
+      <div class="tabs">
+        <button class="tab active" data-view="tuner">🎚 Tuner</button>
+        <button class="tab" data-view="field">🗺 Field</button>
+      </div>
     </header>
 
-    <main class="app">
+    <!-- ===================== TUNER VIEW ===================== -->
+    <main class="app" id="tunerView">
       <aside class="panel">
+        <label class="control block">
+          <span>Mechanism</span>
+          <select id="mode">
+            <option value="drive" selected>Drive to distance</option>
+            <option value="turn">Turn to heading</option>
+          </select>
+        </label>
+
         <div class="group">
-          <div class="group-head">
-            <label for="target">Target</label>
-            <span id="targetVal" class="val">24 in</span>
-          </div>
+          <div class="group-head"><label for="target">Target</label><span id="targetVal" class="val">24 in</span></div>
           <input type="range" id="target" />
         </div>
 
         <div class="gains">
-          <div class="gain" data-k="kP">
-            <div class="group-head"><label>kP <span class="muted">proportional</span></label><input type="number" id="kPnum" step="0.0001" /></div>
-            <input type="range" id="kP" />
-          </div>
-          <div class="gain" data-k="kI">
-            <div class="group-head"><label>kI <span class="muted">integral</span></label><input type="number" id="kInum" step="0.0001" /></div>
-            <input type="range" id="kI" />
-          </div>
-          <div class="gain" data-k="kD">
-            <div class="group-head"><label>kD <span class="muted">derivative</span></label><input type="number" id="kDnum" step="0.0001" /></div>
-            <input type="range" id="kD" />
-          </div>
+          <div class="gain" data-k="kP"><div class="group-head"><label>kP <span class="muted">proportional</span></label><input type="number" id="kPnum" step="0.0001" /></div><input type="range" id="kP" /></div>
+          <div class="gain" data-k="kI"><div class="group-head"><label>kI <span class="muted">integral</span></label><input type="number" id="kInum" step="0.0001" /></div><input type="range" id="kI" /></div>
+          <div class="gain" data-k="kD"><div class="group-head"><label>kD <span class="muted">derivative</span></label><input type="number" id="kDnum" step="0.0001" /></div><input type="range" id="kD" /></div>
         </div>
 
         <div class="toggles">
@@ -66,21 +60,50 @@
 
       <section class="stage">
         <div class="chart-wrap"><canvas id="chart"></canvas></div>
-
         <div class="metrics" id="metrics"></div>
-
         <div class="code">
-          <div class="code-head">
-            <span>Drop-in PID (VEXcode V5 C++)</span>
-            <button class="btn small" id="copy">Copy code</button>
-          </div>
+          <div class="code-head"><span>Drop-in PID (VEXcode V5 C++)</span><button class="btn small" id="copy">Copy code</button></div>
           <pre id="snippet"></pre>
         </div>
       </section>
     </main>
 
+    <!-- ===================== FIELD VIEW ===================== -->
+    <main class="app" id="fieldView" hidden>
+      <aside class="panel">
+        <div class="group">
+          <div class="group-head"><label>Robot size <span class="muted">in</span></label></div>
+          <div class="row">
+            <label class="mini">W <input type="number" id="robotW" value="18" min="6" max="24" step="0.5" /></label>
+            <label class="mini">L <input type="number" id="robotL" value="18" min="6" max="24" step="0.5" /></label>
+          </div>
+        </div>
+        <div class="group">
+          <div class="group-head"><label for="heading">Heading</label><span id="headingVal" class="val">0°</span></div>
+          <input type="range" id="heading" min="0" max="359" step="1" value="0" />
+        </div>
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" id="snap" /><span>Snap to grid (6")</span></label>
+        </div>
+        <div class="buttons">
+          <button class="btn" id="clearPath">Clear path</button>
+          <button class="btn ghost" id="resetRobot">Reset robot</button>
+          <button class="btn primary" id="copyPath">Copy waypoints</button>
+        </div>
+        <div class="hint muted small">
+          Click the field to add a waypoint · drag a point or the robot to move ·
+          drag the robot’s nose to rotate · double-click a point to delete.
+        </div>
+        <div class="readout" id="fieldReadout"></div>
+      </aside>
+
+      <section class="stage">
+        <div class="field-wrap"><canvas id="field"></canvas></div>
+      </section>
+    </main>
+
     <footer class="footer">
-      <span class="muted small">Educational simulation — a simplified model; real robots vary. Built with vanilla JS + Canvas.</span>
+      <span class="muted small">Educational simulation · generic VEX V5 field (12'×12', 24" tiles) · vanilla JS + Canvas.</span>
     </footer>
 
     <script type="module" src="./src/main.js"></script>
