@@ -233,7 +233,12 @@ els.copy.addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(els.snippet.textContent); toast("PID code copied to clipboard"); }
   catch { toast("Copy failed — select the code manually"); }
 });
-window.addEventListener("resize", () => update());
+window.addEventListener("resize", () => {
+  if (!$("replayView").hidden) drawReplay();
+  else if (!$("learnView").hidden) drawLearn();
+  else if (!$("fieldView").hidden) field.resize();
+  else update();
+});
 
 function toast(msg) {
   let t = $("toast");
