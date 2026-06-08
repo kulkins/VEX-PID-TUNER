@@ -322,6 +322,31 @@ $("snap").addEventListener("change", () => field.setSnap($("snap").checked));
 $("curve").addEventListener("change", () => field.setCurve($("curve").checked));
 $("showField").addEventListener("change", () => field.setShowField($("showField").checked));
 
+// ---- field auto-tuners (curve smoothing + follower) ----
+$("smooth").addEventListener("input", () => {
+  const f = Number($("smooth").value);
+  $("smoothVal").textContent = f.toFixed(2);
+  if (!$("curve").checked) { $("curve").checked = true; field.setCurve(true); } // smoothness only shows on a curve
+  field.setSmoothFactor(f);
+});
+$("autoSmooth").addEventListener("change", () => field.setAutoSmooth($("autoSmooth").checked));
+$("autoFollow").addEventListener("change", () => { field.autoTuneFollower = $("autoFollow").checked; renderFollowReadout(); });
+$("resetTuner").addEventListener("click", () => {
+  field.resetTuner();
+  $("smooth").value = "0.17"; $("smoothVal").textContent = "0.17";
+  $("autoSmooth").checked = true;
+  renderFollowReadout();
+  toast("Auto-tuner reset to default");
+});
+function renderFollowReadout() {
+  const f = field.follow, peak = field._lastPeak;
+  const best = field._tune && field._tune.best !== Infinity ? field._tune.best : null;
+  $("followReadout").innerHTML =
+    `Follower: lookahead <b>${f.Ld.toFixed(0)}"</b> · steer <b>${f.Ksteer.toFixed(2)}</b>` +
+    (peak != null ? `<br>last run peak CTE ${peak.toFixed(1)}"${best != null ? ` · best ${best.toFixed(1)}"` : ""}` : "") +
+    (field.autoTuneFollower ? `<br><span style="color:var(--ok)">learning from each run…</span>` : "");
+}
+
 // Run the path: animate the robot following it + plot cross-track error.
 let trackData = [];
 $("runPath").addEventListener("click", () => {
@@ -334,6 +359,8 @@ $("runPath").addEventListener("click", () => {
       $("runPath").textContent = "▶ Run path";
       const maxC = trackData.reduce((m, d) => Math.max(m, d.cte), 0);
       $("trackVal").textContent = trackData.length ? `peak ${maxC.toFixed(1)} in · final ${trackData[trackData.length - 1].cte.toFixed(1)} in` : "";
+      renderFollowReadout();
+      if (field.autoTuneFollower) toast(`Auto-tuned follower → Ld ${field.follow.Ld.toFixed(0)}", steer ${field.follow.Ksteer.toFixed(2)}`);
     }
   );
 });
@@ -447,6 +474,7 @@ $("copyPath").addEventListener("click", async () => {
 // keep the field's heading slider in sync when the robot is rotated by dragging
 const origRender = renderFieldReadout;
 field.onChange = (s) => { origRender(s); $("heading").value = Math.round(s.robot.heading); $("headingVal").textContent = Math.round(s.robot.heading) + "°"; };
+renderFollowReadout();
 
 // ===================== Replay view (tune from real telemetry) =====================
 // No sim in the loop here — the team's own logged error is ground truth. We just

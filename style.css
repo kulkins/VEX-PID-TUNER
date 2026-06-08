@@ -148,6 +148,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .mini { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .mini input { width: 64px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; font-size: 12px; }
 .hint { line-height: 1.5; }
+.tuner-group #followReadout { margin-top: 6px; line-height: 1.5; }
+.tuner-group #followReadout b { color: var(--accent); }
 .readout { border-top: 1px solid var(--border); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 .pose { font-size: 13px; }
 .pose b { color: var(--accent); }

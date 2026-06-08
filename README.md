@@ -84,6 +84,17 @@ Pick **LemLib**, **EZ-Template**, or generic pseudo-code as the export format.
 Because the path geometry is exact regardless of the sim, this output is
 trustworthy — it's the JerryIO-style "draw a path, paste it into your auto" flow.
 
+**Auto-tuner.** Two things tune themselves:
+
+- **Curve smoothing** — each waypoint's Bézier handles are re-derived from its
+  neighbours in real time for a continuous path; a slider sets how round, and
+  turning off *auto-smooth* lets you drag handles by hand instead.
+- **Follower** — turn on *auto-tune follower* and each **Run path** hill-climbs
+  the pure-pursuit lookahead and steering gain to shrink the peak cross-track
+  error, so every run tracks tighter than the last.
+
+**↺ Reset auto-tuner** restores both to defaults.
+
 ## Replay (tune from real telemetry)
 
 Flip the model: instead of trusting the sim, log **error over time** off your

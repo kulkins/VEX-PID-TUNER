@@ -21,6 +21,18 @@ export class Field {
     this.trail = null;
     this._drag = null;
 
+    // ---- auto-tuners ----
+    // Curve: handle length factor; auto-smooth re-derives every handle from its
+    // neighbours in real time (overriding manual drags) for a continuous path.
+    this.smoothFactor = 1 / 6;
+    this.autoSmooth = true;
+    // Follower: pure-pursuit params, hill-climbed across runs to shrink CTE.
+    this.followDefault = { Ld: 20, vCruise: 38, Ksteer: 1.7 };
+    this.follow = { ...this.followDefault };
+    this.autoTuneFollower = false;
+    this._tune = null;       // hill-climb state across runs
+    this._lastPeak = null;   // peak cross-track error of the last run (in)
+
     // Optional real game-field background (drop a field.png in the project).
     this.showField = true;
     this.bgReady = false;
@@ -59,9 +71,9 @@ export class Field {
     const a = [{ x: this.robot.x, y: this.robot.y }, ...this.points];
     for (let i = 0; i < this.points.length; i++) {
       const p = this.points[i];
-      if (p.custom) continue;
+      if (!this.autoSmooth && p.custom) continue; // manual mode keeps dragged handles
       const prev = a[i], next = a[i + 2] || a[i + 1]; // anchor i is a[i+1]
-      p.hx = (next.x - prev.x) / 6; p.hy = (next.y - prev.y) / 6;
+      p.hx = (next.x - prev.x) * this.smoothFactor; p.hy = (next.y - prev.y) * this.smoothFactor;
     }
   }
   _anchors() {
@@ -158,6 +170,29 @@ export class Field {
   setSnap(on) { this.snap = on; }
   setShowField(on) { this.showField = on; this.draw(); }
   setCurve(on) { this.curve = on; this.trail = null; if (on) this.recomputeAutoHandles(); this.draw(); }
+  setSmoothFactor(f) { this.smoothFactor = f; if (this.autoSmooth) this.recomputeAutoHandles(); this.draw(); }
+  setAutoSmooth(on) { this.autoSmooth = on; if (on) this.recomputeAutoHandles(); this.draw(); }
+  // Reset both auto-tuners to defaults: re-enable live smoothing, clear manual
+  // handle drags, and restore the follower gains + tuning history.
+  resetTuner() {
+    this.autoSmooth = true; this.smoothFactor = 1 / 6;
+    this.points.forEach((p) => { p.custom = false; });
+    this.follow = { ...this.followDefault }; this._tune = null; this._lastPeak = null;
+    this.recomputeAutoHandles(); this.draw(); this.onChange(this.state());
+  }
+  // One hill-climb step per completed run: minimize peak cross-track error by
+  // nudging lookahead (Ld) then steering gain (Ksteer), reverting on regressions.
+  _tuneStep(peak) {
+    const t = this._tune || (this._tune = { best: Infinity, params: { ...this.follow }, axis: "Ld", dir: -1, step: { Ld: 4, Ksteer: 0.25 } });
+    if (peak < t.best - 0.02) {
+      t.best = peak; t.params = { ...this.follow }; // improvement → keep this direction
+    } else {
+      this.follow = { ...t.params }; // regression → revert, then flip dir / switch axis
+      if (t.dir === -1) t.dir = 1; else { t.dir = -1; t.axis = t.axis === "Ld" ? "Ksteer" : "Ld"; }
+    }
+    if (t.axis === "Ld") this.follow.Ld = clampRange(this.follow.Ld + t.dir * t.step.Ld, 6, 40);
+    else this.follow.Ksteer = clampRange(this.follow.Ksteer + t.dir * t.step.Ksteer, 0.6, 3.5);
+  }
   clearPoints() { this.stopPath(); this.points = []; this.trail = null; this.draw(); this.onChange(this.state()); }
   resetRobot() { this.stopPath(); this.robot.x = 0; this.robot.y = -48; this.robot.heading = 0; this.trail = null; this.recomputeAutoHandles(); this.draw(); this.onChange(this.state()); }
   state() { return { robot: { ...this.robot }, points: this.points.map((p) => ({ x: p.x, y: p.y, heading: p.heading })) }; }
@@ -193,8 +228,8 @@ export class Field {
     const total = arc[arc.length - 1];
 
     this.trail = [{ x: start.x, y: start.y }];
-    const Ld = 20, vCruise = 38, Ksteer = 1.7, maxOmega = 200, dt = 0.02;
-    let t = 0, near = 0, done = false;
+    const { Ld, vCruise, Ksteer } = this.follow; const maxOmega = 200, dt = 0.02;
+    let t = 0, near = 0, done = false, peak = 0;
     const step = () => {
       for (let k = 0; k < 2; k++) {
         while (near < samples.length - 1 && dist(this.robot, samples[near + 1]) < dist(this.robot, samples[near])) near++;
@@ -212,6 +247,7 @@ export class Field {
         t += dt;
         let cte = Infinity;
         for (let j = 0; j < samples.length - 1; j++) { const dd = segDist(this.robot, samples[j], samples[j + 1]); if (dd < cte) cte = dd; }
+        if (cte > peak) peak = cte;
         this.trail.push({ x: this.robot.x, y: this.robot.y });
         onFrame && onFrame({ t, cte });
         if (remaining < 1.2 || t > 16) { done = true; break; }
@@ -219,7 +255,9 @@ export class Field {
       if (done) {
         this._anim = null;
         this.robot.x = start.x; this.robot.y = start.y; this.robot.heading = start.heading;
-        this.draw(); this.onChange(this.state()); onDone && onDone();
+        this._lastPeak = peak;
+        if (this.autoTuneFollower) this._tuneStep(peak); // learn for the next run
+        this.draw(); this.onChange(this.state()); onDone && onDone(peak);
       } else { this.draw(); this._anim = requestAnimationFrame(step); }
     };
     this._anim = requestAnimationFrame(step);
@@ -334,6 +372,7 @@ function densify(pts, per = 8) {
   return out;
 }
 function clamp(v) { return Math.max(-FIELD / 2, Math.min(FIELD / 2, v)); }
+function clampRange(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function rad(d) { return (d * Math.PI) / 180; }
 function deg(r) { return (r * 180) / Math.PI; }
 function fmt(n) { return (Math.round(n * 10) / 10).toString(); }

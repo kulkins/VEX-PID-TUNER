@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>VEX PID Tuner + Field Planner</title>
-    <link rel="stylesheet" href="./style.css?v=10" />
+    <link rel="stylesheet" href="./style.css?v=11" />
   </head>
   <body>
     <header class="topbar">
@@ -97,6 +97,14 @@
           <label class="toggle"><input type="checkbox" id="showField" checked /><span>Game field background</span></label>
           <label class="toggle"><input type="checkbox" id="curve" /><span>Curved path (smooth)</span></label>
           <label class="toggle"><input type="checkbox" id="snap" /><span>Snap to grid (6")</span></label>
+        </div>
+        <div class="group tuner-group">
+          <div class="group-head"><label for="smooth">Auto-tuner</label><span id="smoothVal" class="val">0.17</span></div>
+          <input type="range" id="smooth" min="0" max="0.35" step="0.01" value="0.17" />
+          <label class="toggle" style="margin-top:8px"><input type="checkbox" id="autoSmooth" checked /><span>Auto-smooth curve handles (live)</span></label>
+          <label class="toggle"><input type="checkbox" id="autoFollow" /><span>Auto-tune follower from runs</span></label>
+          <div class="muted small" id="followReadout"></div>
+          <button class="btn ghost small" id="resetTuner" style="margin-top:8px">↺ Reset auto-tuner</button>
         </div>
         <div class="group">
           <div class="group-head"><label for="pathTemplate">Export format</label></div>
