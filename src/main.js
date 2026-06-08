@@ -109,15 +109,16 @@ function plotLine(ctx, t, y, X, Y, color, w) {
 }
 
 // ---- metrics ----
-function renderMetrics(m, unit) {
+function metricCardsHTML(m, unit) {
   const cards = [
     { label: "Rise time", val: m.rise == null ? "—" : m.rise.toFixed(2) + "s", cls: m.rise == null ? "bad" : m.rise < 0.6 ? "good" : m.rise < 1.2 ? "warn" : "bad" },
     { label: "Overshoot", val: m.overshoot.toFixed(0) + "%", cls: m.overshoot < 5 ? "good" : m.overshoot < 20 ? "warn" : "bad" },
     { label: "Settling", val: m.settled ? m.settle.toFixed(2) + "s" : "—", cls: !m.settled ? "bad" : m.settle < 1 ? "good" : m.settle < 1.8 ? "warn" : "bad" },
     { label: "Steady-state err", val: m.ssError.toFixed(2) + " " + unit, cls: m.ssError < 0.1 ? "good" : m.ssError < 0.5 ? "warn" : "bad" },
   ];
-  els.metrics.innerHTML = cards.map((c) => `<div class="metric ${c.cls}"><div class="label">${c.label}</div><div class="num">${c.val}</div></div>`).join("");
+  return cards.map((c) => `<div class="metric ${c.cls}"><div class="label">${c.label}</div><div class="num">${c.val}</div></div>`).join("");
 }
+function renderMetrics(m, unit) { els.metrics.innerHTML = metricCardsHTML(m, unit); }
 
 // ---- code snippet (multiple template formats) ----
 const SNIPPETS = {
@@ -299,7 +300,11 @@ document.querySelectorAll(".tab").forEach((tab) =>
     document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
     $("tunerView").hidden = v !== "tuner";
     $("fieldView").hidden = v !== "field";
-    if (v === "field") field.resize(); // canvas needs a real size once visible
+    $("replayView").hidden = v !== "replay";
+    $("learnView").hidden = v !== "learn";
+    if (v === "field") field.resize();        // canvas needs a real size once visible
+    else if (v === "replay") drawReplay();
+    else if (v === "learn") drawLearn();
     else update();
   })
 );
@@ -347,52 +352,249 @@ function drawTrack() {
 }
 $("clearPath").addEventListener("click", () => field.clearPoints());
 $("resetRobot").addEventListener("click", () => { field.resetRobot(); $("heading").value = 0; $("headingVal").textContent = "0°"; });
-// Build the exported autonomous. WITH odometry the robot knows its absolute
-// (x, y, θ) pose, so we emit moveToPoint/moveToPose calls to field coordinates.
-// WITHOUT odometry it's dead reckoning — a relative turn + drive sequence the
-// robot executes open-loop (no global position), computed from the geometry.
-function buildPathCode(s, odom) {
+// Build the exported autonomous in the chosen team template. WITH odometry the
+// robot knows its absolute (x, y, θ) pose, so we emit coordinate moves. WITHOUT
+// odometry it's dead reckoning — a relative turn-then-drive sequence the robot
+// runs open-loop, computed straight from the path geometry. Path geometry is
+// ground truth regardless of the sim, so this output is trustworthy.
+function deadReckon(s) {
+  // → ordered list of {i, x, y, turn (deg, +CW), drive (in), faceDeg, settle, settleTo}
+  let cx = s.robot.x, cy = s.robot.y, ch = s.robot.heading;
+  return s.points.map((p, idx) => {
+    const dx = p.x - cx, dy = p.y - cy, drive = Math.hypot(dx, dy);
+    const face = ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
+    const turn = ((face - ch + 540) % 360) - 180;
+    cx = p.x; cy = p.y; ch = face;
+    let settle = null, settleTo = null;
+    if (p.heading != null) {
+      const s2 = ((p.heading - ch + 540) % 360) - 180;
+      if (Math.abs(s2) > 0.5) { settle = s2; settleTo = Math.round(p.heading); ch = p.heading; }
+    }
+    return { i: idx + 1, x: round(p.x), y: round(p.y), turn, drive, faceDeg: Math.round(face), settle, settleTo };
+  });
+}
+
+function buildPathCode(s, odom, tpl) {
   const sx = round(s.robot.x), sy = round(s.robot.y), sh = Math.round(s.robot.heading);
   if (!s.points.length) return "// No waypoints yet — click the field to add some.";
+
   if (odom) {
-    const lines = s.points.map((p, i) =>
-      p.heading == null
-        ? `chassis.moveToPoint(${round(p.x)}, ${round(p.y)}, 2000);            // waypoint ${i + 1}`
-        : `chassis.moveToPose(${round(p.x)}, ${round(p.y)}, ${Math.round(p.heading)}, 2000);   // waypoint ${i + 1} @ ${Math.round(p.heading)}°`
-    ).join("\n");
-    return `// Autonomous — ODOMETRY ON (absolute field coords, inches; origin = centre, +y forward)\n` +
-      `chassis.setPose(${sx}, ${sy}, ${sh});\n${lines}`;
-  }
-  // No odometry: relative turn-then-drive from the start pose. turnFor(+) = clockwise.
-  let cx = s.robot.x, cy = s.robot.y, ch = s.robot.heading;
-  const out = [];
-  s.points.forEach((p, i) => {
-    const dx = p.x - cx, dy = p.y - cy, d = Math.hypot(dx, dy);
-    const tgt = ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
-    const turn = ((tgt - ch + 540) % 360) - 180;
-    out.push(`// → waypoint ${i + 1}  (${round(p.x)}, ${round(p.y)})`);
-    if (Math.abs(turn) > 0.5) out.push(`turnFor(${turn.toFixed(1)});      // face ${Math.round(tgt)}°`);
-    out.push(`driveFor(${d.toFixed(1)});`);
-    cx = p.x; cy = p.y; ch = tgt;
-    if (p.heading != null) {
-      const settle = ((p.heading - ch + 540) % 360) - 180;
-      if (Math.abs(settle) > 0.5) { out.push(`turnFor(${settle.toFixed(1)});      // settle to ${Math.round(p.heading)}°`); ch = p.heading; }
+    if (tpl === "lemlib") {
+      const body = s.points.map((p) =>
+        p.heading == null
+          ? `chassis.moveToPoint(${round(p.x)}, ${round(p.y)}, 2000);`
+          : `chassis.moveToPose(${round(p.x)}, ${round(p.y)}, ${Math.round(p.heading)}, 2000);`
+      ).join("\n");
+      return `// LemLib — odometry path · field coords (in), +y forward · origin = field centre\n` +
+        `chassis.setPose(${sx}, ${sy}, ${sh});\n${body}`;
     }
-  });
-  return `// Autonomous — NO ODOMETRY (open-loop dead reckoning, inches / degrees)\n` +
-    `// Start pose assumed: (${sx}, ${sy}) @ ${sh}°   ·   turnFor(+) = clockwise\n${out.join("\n")}`;
+    if (tpl === "ez") {
+      const body = s.points.map((p) => {
+        const pose = p.heading == null ? `${round(p.x)}, ${round(p.y)}` : `${round(p.x)}, ${round(p.y)}, ${Math.round(p.heading)}`;
+        return `chassis.pid_odom_set({{${pose}}, fwd, DRIVE_SPEED});\nchassis.pid_wait();`;
+      }).join("\n");
+      return `// EZ-Template — odometry path · field coords (in)\n` +
+        `chassis.odom_pose_set({${sx}, ${sy}, ${sh}});\n${body}`;
+    }
+    const body = s.points.map((p) =>
+      p.heading == null ? `moveToPoint(${round(p.x)}, ${round(p.y)});` : `moveToPose(${round(p.x)}, ${round(p.y)}, ${Math.round(p.heading)});`
+    ).join("\n");
+    return `// Generic odometry path · field coords (in), +y forward\nsetPose(${sx}, ${sy}, ${sh});\n${body}`;
+  }
+
+  // ---- no odometry: dead reckoning ----
+  const seq = deadReckon(s);
+  if (tpl === "ez") {
+    const body = seq.map((m) => {
+      const l = [`// → waypoint ${m.i}  (${m.x}, ${m.y})`];
+      if (Math.abs(m.turn) > 0.5) l.push(`chassis.pid_turn_set(${m.turn.toFixed(1)}, TURN_SPEED);`, `chassis.pid_wait();`);
+      l.push(`chassis.pid_drive_set(${m.drive.toFixed(1)}, DRIVE_SPEED);`, `chassis.pid_wait();`);
+      if (m.settle != null) l.push(`chassis.pid_turn_set(${m.settle.toFixed(1)}, TURN_SPEED);  // settle to ${m.settleTo}°`, `chassis.pid_wait();`);
+      return l.join("\n");
+    }).join("\n");
+    return `// EZ-Template — NO ODOMETRY · relative drive/turn (encoder + IMU)\n` +
+      `// from start pose (${sx}, ${sy}) @ ${sh}° · pid_turn_set(+) = clockwise\n${body}`;
+  }
+  const body = seq.map((m) => {
+    const l = [`// → waypoint ${m.i}  (${m.x}, ${m.y})`];
+    if (Math.abs(m.turn) > 0.5) l.push(`turnFor(${m.turn.toFixed(1)});      // face ${m.faceDeg}°`);
+    l.push(`driveFor(${m.drive.toFixed(1)});`);
+    if (m.settle != null) l.push(`turnFor(${m.settle.toFixed(1)});      // settle to ${m.settleTo}°`);
+    return l.join("\n");
+  }).join("\n");
+  const note = tpl === "lemlib"
+    ? `// LemLib coordinate motions REQUIRE odometry — turn on "Odometry" above for moveToPoint/Pose.\n// Open-loop fallback (wire turnFor/driveFor to your own PID):\n`
+    : `// turnFor(+) = clockwise (deg) · driveFor = inches\n`;
+  return `// NO ODOMETRY — open-loop dead reckoning from start pose (${sx}, ${sy}) @ ${sh}°\n${note}${body}`;
 }
 
 $("copyPath").addEventListener("click", async () => {
   const s = field.state();
   const odom = $("odom").checked;
-  const code = buildPathCode(s, odom);
+  const tpl = $("pathTemplate").value;
+  const code = buildPathCode(s, odom, tpl);
   try {
     await navigator.clipboard.writeText(code);
-    toast(`Copied ${s.points.length} waypoint(s) · ${odom ? "odometry" : "dead-reckoning"}`);
+    toast(`Copied ${s.points.length} waypoint(s) · ${tpl} · ${odom ? "odom" : "dead-reckoning"}`);
   } catch { toast("Copy failed"); }
 });
 
 // keep the field's heading slider in sync when the robot is rotated by dragging
 const origRender = renderFieldReadout;
 field.onChange = (s) => { origRender(s); $("heading").value = Math.round(s.robot.heading); $("headingVal").textContent = Math.round(s.robot.heading) + "°"; };
+
+// ===================== Replay view (tune from real telemetry) =====================
+// No sim in the loop here — the team's own logged error is ground truth. We just
+// visualize it and read the same metrics off it that the tuner uses.
+let replayData = null;
+
+function parseTelemetry(text) {
+  const t = [], err = [];
+  let cols = 0;
+  for (const line of text.trim().split(/\r?\n/)) {
+    const n = line.split(/[\s,]+/).filter(Boolean).map(Number);
+    if (n.length < 2 || n.some(Number.isNaN)) continue; // skip headers / blanks
+    cols = Math.max(cols, n.length);
+    t.push(n[0]);
+    err.push(n.length >= 3 ? n[1] - n[2] : n[1]); // t,setpoint,response → error, else t,error
+  }
+  return t.length >= 2 ? { t, err, cols } : null;
+}
+
+function replayMetrics(t, err) {
+  const E0 = Math.abs(err[0]) || 1, band = 0.05 * E0, s0 = Math.sign(err[0]) || 1;
+  let rise = null, settle = 0, overshoot = 0, crossings = 0;
+  for (let i = 0; i < err.length; i++) {
+    if (rise === null && Math.abs(err[i]) <= 0.1 * E0) rise = t[i] - t[0];
+    const past = -s0 * err[i]; if (past > overshoot) overshoot = past;
+    if (Math.abs(err[i]) > band) settle = t[i] - t[0];
+    if (i > 0 && err[i] !== 0 && Math.sign(err[i]) !== Math.sign(err[i - 1])) crossings++;
+  }
+  const dur = t[t.length - 1] - t[0];
+  return { rise, overshoot: (overshoot / E0) * 100, settle, settled: settle < dur * 0.98, ssError: Math.abs(err[err.length - 1]), crossings, E0, dur };
+}
+
+function replaySuggest(m) {
+  const tips = [];
+  if (m.crossings >= 4) tips.push(["Oscillating", "Error keeps flipping sign around zero — reduce kP and/or add kD."]);
+  else if (m.overshoot > 25) tips.push(["High overshoot", `~${m.overshoot.toFixed(0)}% past target — lower kP or raise kD.`]);
+  if (m.ssError > 0.05 * m.E0 && m.crossings < 4) tips.push(["Steady-state error", "Settles short of target — add/increase kI (watch windup)."]);
+  if (!m.settled) tips.push(["Never settles", "Doesn't stay within 5% — too little kP, or too much kI causing drift."]);
+  else if (m.overshoot < 5 && m.crossings < 2 && m.settle > 0.6 * m.dur) tips.push(["Sluggish", "Clean but slow — increase kP for a faster rise."]);
+  if (!tips.length) tips.push(["Looks well-tuned", "Fast rise, low overshoot, settles near zero. 👌"]);
+  return tips;
+}
+
+function drawReplay() {
+  const c = $("replayChart"), ctx = c.getContext("2d");
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = c.clientWidth, H = c.clientHeight;
+  c.width = W * dpr; c.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const mL = 46, mR = 12, mT = 14, mB = 28, pw = W - mL - mR, ph = H - mT - mB;
+  if (!replayData) {
+    ctx.fillStyle = "#9b9cc6"; ctx.font = "13px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("Paste telemetry and press “Plot & analyze”.", W / 2, H / 2);
+    return;
+  }
+  const { t, err } = replayData;
+  const t0 = t[0], tMax = t[t.length - 1] - t0 || 1;
+  let yMax = 0, yMin = 0; for (const e of err) { if (e > yMax) yMax = e; if (e < yMin) yMin = e; }
+  const pad = (yMax - yMin) * 0.12 + 0.5; yMax += pad; yMin -= pad;
+  const X = (s) => mL + ((s - t0) / tMax) * pw, Y = (v) => mT + ph - ((v - yMin) / (yMax - yMin)) * ph;
+  // grid + y labels
+  ctx.font = "11px system-ui"; ctx.fillStyle = "#9b9cc6"; ctx.strokeStyle = "rgba(255,255,255,0.06)"; ctx.lineWidth = 1;
+  for (let g = 0; g <= 4; g++) { const v = yMin + (g / 4) * (yMax - yMin), y = Y(v); ctx.beginPath(); ctx.moveTo(mL, y); ctx.lineTo(W - mR, y); ctx.stroke(); ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText(v.toFixed(1), mL - 6, y); }
+  ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillText("error", mL + 2, mT);
+  ctx.textAlign = "right"; ctx.textBaseline = "bottom"; ctx.fillText(tMax.toFixed(1) + "s", W - mR, H);
+  // 5% band + zero line
+  const E0 = Math.abs(err[0]) || 1, band = 0.05 * E0;
+  ctx.fillStyle = "rgba(110,255,177,0.10)"; ctx.fillRect(mL, Y(band), pw, Y(-band) - Y(band));
+  ctx.strokeStyle = "rgba(170,178,255,0.8)"; ctx.setLineDash([6, 5]); ctx.beginPath(); ctx.moveTo(mL, Y(0)); ctx.lineTo(W - mR, Y(0)); ctx.stroke(); ctx.setLineDash([]);
+  // error trace
+  ctx.strokeStyle = "#6effb1"; ctx.lineWidth = 2.2; ctx.beginPath();
+  for (let i = 0; i < t.length; i++) { const x = X(t[i]), y = Y(err[i]); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+  ctx.stroke();
+}
+
+function analyzeReplay() {
+  const parsed = parseTelemetry($("telemetryInput").value);
+  if (!parsed) { toast("Couldn't parse — need rows of t,error (or t,setpoint,response)"); return; }
+  replayData = parsed;
+  drawReplay();
+  const m = replayMetrics(parsed.t, parsed.err);
+  $("replayMetrics").innerHTML = `<div class="metrics mini-metrics">${metricCardsHTML(
+    { rise: m.rise, overshoot: m.overshoot, settle: m.settle, settled: m.settled, ssError: m.ssError }, "")}</div>`;
+  $("replaySuggest").innerHTML = `<div class="suggest-head">Suggestions</div>` +
+    replaySuggest(m).map(([h, b]) => `<div class="suggest"><b>${h}</b> — ${b}</div>`).join("");
+  toast(`Parsed ${parsed.t.length} samples${parsed.cols >= 3 ? " (setpoint/response)" : ""}`);
+}
+
+function sampleTelemetry() {
+  const run = simulate({ mode: "drive", kP: 5.5 / 24, kI: 0.15 / 24, kD: 0.5 / 24, target: 24 });
+  const lines = ["t,error"];
+  for (let i = 0; i < run.t.length; i += 2) {
+    const e = 24 - run.x[i] + Math.sin(i * 1.7) * 0.06; // a touch of sensor-like noise
+    lines.push(`${run.t[i].toFixed(2)}, ${e.toFixed(2)}`);
+  }
+  return lines.join("\n");
+}
+
+$("replayLoad").addEventListener("click", analyzeReplay);
+$("replaySample").addEventListener("click", () => { $("telemetryInput").value = sampleTelemetry(); analyzeReplay(); });
+$("replayClear").addEventListener("click", () => { $("telemetryInput").value = ""; replayData = null; $("replayMetrics").innerHTML = ""; $("replaySuggest").innerHTML = ""; drawReplay(); });
+
+// ===================== Learn view (what each term does) =====================
+const LESSONS = {
+  p: { gains: { kP: 5 / 24, kI: 0, kD: 0 }, load: 0, ref: null,
+    title: "P — Proportional",
+    body: "Output is proportional to error — the farther from target, the harder it drives. Strong P is fast but overshoots and rings before it settles. P gives you speed, not a clean stop." },
+  pd: { gains: { kP: 5 / 24, kI: 0, kD: 1.6 / 24 }, load: 0,
+    ref: { kP: 5 / 24, kI: 0, kD: 0, load: 0 }, refLabel: "P only",
+    title: "D — Derivative",
+    body: "D reacts to how fast the error is shrinking and eases off early, braking before the target. The overshoot P caused is gone and it settles sooner. Too much D with a noisy sensor gets jittery." },
+  pid: { gains: { kP: 5 / 24, kI: 0.7 / 24, kD: 1.6 / 24 }, load: 110,
+    ref: { kP: 5 / 24, kI: 0, kD: 1.6 / 24, load: 110 }, refLabel: "P + D, no I",
+    title: "I — Integral",
+    body: "Now there's a constant load — think holding an arm up against gravity. P+D stops short: it needs a standing error to make the effort that fights the load. I sums that leftover error over time until the gap closes and it reaches the target. Too much I causes wind-up overshoot." },
+};
+let lesson = "p";
+
+function drawLearn() {
+  const L = LESSONS[lesson], g = L.gains;
+  const run = simulate({ mode: "drive", target: 24, ...g, load: L.load, duration: 5 });
+  const ref = L.ref ? simulate({ mode: "drive", target: 24, ...L.ref, duration: 5 }) : null;
+  // chart
+  const c = $("learnChart"), ctx = c.getContext("2d");
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = c.clientWidth, H = c.clientHeight;
+  c.width = W * dpr; c.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const T = 24, mL = 46, mR = 12, mT = 12, mB = 28, pw = W - mL - mR, ph = H - mT - mB;
+  let yMax = T; for (const v of run.x) if (v > yMax) yMax = v; yMax = yMax * 1.12 + 2;
+  const tMax = run.duration;
+  const X = (t) => mL + (t / tMax) * pw, Y = (v) => mT + ph - (v / yMax) * ph;
+  ctx.font = "11px system-ui"; ctx.fillStyle = "#9b9cc6"; ctx.strokeStyle = "rgba(255,255,255,0.06)"; ctx.lineWidth = 1;
+  for (let gg = 0; gg <= 5; gg++) { const v = (gg / 5) * yMax, y = Y(v); ctx.beginPath(); ctx.moveTo(mL, y); ctx.lineTo(W - mR, y); ctx.stroke(); ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText(v.toFixed(0), mL - 6, y); }
+  for (let s = 0; s <= tMax + 1e-6; s += 0.5) { const x = X(s); ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText(s.toFixed(1) + "s", x, mT + ph + 6); }
+  ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillText("in", mL + 2, mT);
+  // band + setpoint
+  ctx.fillStyle = "rgba(170,178,255,0.10)"; ctx.fillRect(mL, Y(T * 1.05), pw, Y(T * 0.95) - Y(T * 1.05));
+  ctx.strokeStyle = "rgba(170,178,255,0.85)"; ctx.setLineDash([6, 5]); ctx.beginPath(); ctx.moveTo(mL, Y(T)); ctx.lineTo(W - mR, Y(T)); ctx.stroke(); ctx.setLineDash([]);
+  // faded P-only reference
+  if (ref) { ctx.strokeStyle = "rgba(155,156,198,0.5)"; ctx.lineWidth = 1.6; ctx.beginPath(); for (let i = 0; i < ref.t.length; i++) { const x = X(ref.t[i]), y = Y(ref.x[i]); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); } ctx.stroke(); }
+  // response
+  ctx.strokeStyle = "#aab2ff"; ctx.lineWidth = 2.6; ctx.beginPath();
+  for (let i = 0; i < run.t.length; i++) { const x = X(run.t[i]), y = Y(run.x[i]); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+  ctx.stroke();
+  // text
+  document.querySelectorAll(".lesson-btn").forEach((b) => b.classList.toggle("active", b.dataset.lesson === lesson));
+  $("lessonCard").innerHTML = `<h4>${L.title}</h4><p>${L.body}</p>`;
+  $("learnMetrics").innerHTML = `<div class="metrics mini-metrics">${metricCardsHTML(metrics(run), "in")}</div>`;
+  $("learnGains").innerHTML = `kP=${round(g.kP)} · kI=${round(g.kI)} · kD=${round(g.kD)}` +
+    (L.load ? ` · load on` : ``) + (ref ? `  &nbsp;·&nbsp; <span style="color:#9b9cc6">faded line = ${L.refLabel}</span>` : "");
+}
+
+document.querySelectorAll(".lesson-btn").forEach((b) =>
+  b.addEventListener("click", () => { lesson = b.dataset.lesson; drawLearn(); })
+);

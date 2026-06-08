@@ -1,16 +1,23 @@
 # VEX PID Tuner + Field Planner
 
-Two tools in one browser app, no robot required:
+Four tools in one browser app, no robot required:
 
 1. **PID Tuner** — tune a drivetrain controller and watch the closed-loop
    response in real time.
-2. **Field Planner** — a top-down VEX V5 field with a coordinate grid, a
-   draggable/rotatable robot outline, and clickable waypoints (straight or
-   smooth curved paths). **Run path** drives the robot along the route with a
-   pure-pursuit follower and plots live **cross-track error**.
+2. **Field Planner** — a top-down VEX V5 field (over a photo of the real game
+   field) with a coordinate grid, a draggable/rotatable robot outline, and
+   clickable waypoints (straight or smooth curved paths). **Run path** drives the
+   robot along the route with a pure-pursuit follower and plots live
+   **cross-track error**. Exports paste-ready autonomous code for **LemLib** and
+   **EZ-Template** (with or without odometry).
+3. **Replay** — paste real error-over-time logged off your actual robot and tune
+   against ground truth (no sim physics in the loop). Reads back rise/overshoot/
+   settling/steady-state and suggests gain changes.
+4. **Learn** — an interactive walkthrough of what P, I, and D each do to the
+   response curve, one term at a time.
 
 The tuner exports gains in your template's format: **VEXcode V5**, **LemLib**,
-**JAR-Template**, or a generic PID struct.
+**JAR-Template**, or RW-Template.
 
 **▶ Live demo:** _deploy to GitHub Pages / Netlify (see below)_
 
@@ -72,6 +79,31 @@ robot can actually run:
 - **Odometry off** — open-loop *dead reckoning*: a relative **turn-then-drive**
   sequence computed from the waypoint geometry, for robots with no tracking
   wheels / position tracking.
+
+Pick **LemLib**, **EZ-Template**, or generic pseudo-code as the export format.
+Because the path geometry is exact regardless of the sim, this output is
+trustworthy — it's the JerryIO-style "draw a path, paste it into your auto" flow.
+
+## Replay (tune from real telemetry)
+
+Flip the model: instead of trusting the sim, log **error over time** off your
+actual robot and paste it in (`t,error` or `t,setpoint,response`, one row per
+loop). The app plots it, reads the same step-response metrics off the real curve,
+and suggests gain changes (e.g. "oscillating → reduce kP / add kD",
+"steady-state error → add kI"). No sim in the loop, so the sim-to-real gap
+disappears — you're tuning against ground truth.
+
+## Learn (what P, I, and D each do)
+
+An interactive lesson: the same move, adding one term at a time.
+
+- **P** alone is fast but overshoots and rings.
+- **+ D** brakes before the target and kills the overshoot.
+- **+ I** (shown against a constant load, like holding an arm up) closes the
+  steady-state gap P and D leave behind.
+
+Each step shows the live response curve, the previous step faded for comparison,
+and the resulting metrics.
 
 ## Run locally
 

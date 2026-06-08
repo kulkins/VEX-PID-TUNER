@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>VEX PID Tuner + Field Planner</title>
-    <link rel="stylesheet" href="./style.css?v=7" />
+    <link rel="stylesheet" href="./style.css?v=8" />
   </head>
   <body>
     <header class="topbar">
@@ -18,6 +18,8 @@
       <div class="tabs">
         <button class="tab active" data-view="tuner">🎚 Tuner</button>
         <button class="tab" data-view="field">🗺 Field</button>
+        <button class="tab" data-view="replay">📈 Replay</button>
+        <button class="tab" data-view="learn">🎓 Learn</button>
       </div>
     </header>
 
@@ -96,11 +98,19 @@
           <label class="toggle"><input type="checkbox" id="curve" /><span>Curved path (smooth)</span></label>
           <label class="toggle"><input type="checkbox" id="snap" /><span>Snap to grid (6")</span></label>
         </div>
+        <div class="group">
+          <div class="group-head"><label for="pathTemplate">Export format</label></div>
+          <select id="pathTemplate" class="mini-select" style="width:100%">
+            <option value="lemlib" selected>LemLib (PROS)</option>
+            <option value="ez">EZ-Template</option>
+            <option value="generic">Generic / pseudo-code</option>
+          </select>
+        </div>
         <div class="buttons">
           <button class="btn primary" id="runPath">▶ Run path</button>
           <button class="btn" id="clearPath">Clear path</button>
           <button class="btn ghost" id="resetRobot">Reset robot</button>
-          <button class="btn" id="copyPath">Copy waypoints</button>
+          <button class="btn" id="copyPath">Copy code</button>
         </div>
         <div class="hint muted small">
           Click the field to add a waypoint · drag a point or the robot to move ·
@@ -116,6 +126,61 @@
           <div class="track-head"><span>Path tracking — cross-track error</span><span id="trackVal" class="muted small"></span></div>
           <canvas id="trackChart"></canvas>
         </div>
+      </section>
+    </main>
+
+    <!-- ===================== REPLAY VIEW ===================== -->
+    <main class="app" id="replayView" hidden>
+      <aside class="panel">
+        <div class="group">
+          <div class="group-head"><label>Tune from real telemetry</label></div>
+          <p class="muted small" style="margin:0 0 8px;line-height:1.5">
+            Log <b>error over time</b> on your actual robot and paste it here — no
+            sim physics in the loop, so what you see is ground truth. Accepts
+            <code>t,error</code> or <code>t,setpoint,response</code> (one row per loop).
+          </p>
+        </div>
+        <textarea id="telemetryInput" class="telemetry" spellcheck="false"
+          placeholder="0.00, 24.0&#10;0.02, 23.4&#10;0.04, 22.1&#10;..."></textarea>
+        <div class="buttons">
+          <button class="btn primary" id="replayLoad">Plot &amp; analyze</button>
+          <button class="btn" id="replaySample">Load sample</button>
+          <button class="btn ghost" id="replayClear">Clear</button>
+        </div>
+        <div class="readout" id="replayMetrics"></div>
+        <div class="readout" id="replaySuggest"></div>
+      </aside>
+      <section class="stage">
+        <div class="chart-wrap"><canvas id="replayChart"></canvas></div>
+        <div class="hint muted small">
+          Error → 0 means the robot reached its target. Crossing below zero is
+          overshoot; wiggling around zero is oscillation; a gap that never closes
+          is steady-state error.
+        </div>
+      </section>
+    </main>
+
+    <!-- ===================== LEARN VIEW ===================== -->
+    <main class="app" id="learnView" hidden>
+      <aside class="panel">
+        <div class="group">
+          <div class="group-head"><label>What does each term do?</label></div>
+          <p class="muted small" style="margin:0;line-height:1.5">
+            Same drive-to-24" move each time. Add one term at a time and watch the
+            response curve change.
+          </p>
+        </div>
+        <div class="buttons lessons">
+          <button class="btn lesson-btn active" data-lesson="p">P only</button>
+          <button class="btn lesson-btn" data-lesson="pd">+ D</button>
+          <button class="btn lesson-btn" data-lesson="pid">+ I</button>
+        </div>
+        <div class="lesson-card" id="lessonCard"></div>
+        <div class="readout" id="learnMetrics"></div>
+      </aside>
+      <section class="stage">
+        <div class="chart-wrap"><canvas id="learnChart"></canvas></div>
+        <div class="hint muted small" id="learnGains"></div>
       </section>
     </main>
 

@@ -64,10 +64,15 @@ function gauss(rng) {
 }
 
 // Run one closed-loop simulation. Returns time series + setpoint.
-export function simulate({ mode = "drive", kP = 0, kI = 0, kD = 0, target, noise = false, disturbance = false } = {}) {
+// `load` is a constant opposing acceleration (units/s²) the controller must hold
+// against — like an arm fighting gravity. With a load, P needs a non-zero error
+// to produce the holding effort, so it stops short (steady-state error) and only
+// integral (I) can close that gap. Default 0 = a free drive that needs no holding.
+export function simulate({ mode = "drive", kP = 0, kI = 0, kD = 0, target, noise = false, disturbance = false, duration, load = 0 } = {}) {
   const cfg = MODES[mode];
   const T = target ?? cfg.target;
-  const n = Math.round(cfg.duration / DT);
+  const dur = duration ?? cfg.duration;
+  const n = Math.round(dur / DT);
   const drag = cfg.accelMax / cfg.vMax;
   const rng = mulberry32(0xC0FFEE); // fixed seed → noise looks identical run-to-run
   let x = 0, v = 0, integral = 0, prevMeas = 0;
@@ -92,7 +97,7 @@ export function simulate({ mode = "drive", kP = 0, kI = 0, kD = 0, target, noise
     u = Math.max(-1, Math.min(1, u));
     const applied = Math.abs(u) < cfg.deadband ? 0 : u; // static friction
 
-    const a = applied * cfg.accelMax - v * drag;
+    const a = applied * cfg.accelMax - v * drag - load; // load = constant holding demand
     v += a * DT;
     if (i === distStep) v += cfg.disturb; // external shove
     x += v * DT;
@@ -102,7 +107,7 @@ export function simulate({ mode = "drive", kP = 0, kI = 0, kD = 0, target, noise
     meas.push(measured);
     us.push(u);
   }
-  return { t, x: xs, measured: meas, u: us, target: T, mode, dt: DT, distAt: distStep >= 0 ? distStep * DT : null, cfg };
+  return { t, x: xs, measured: meas, u: us, target: T, mode, dt: DT, duration: dur, distAt: distStep >= 0 ? distStep * DT : null, cfg };
 }
 
 // Step-response metrics from a (clean) run.
@@ -117,7 +122,7 @@ export function metrics(run) {
     if (over > peak) peak = over;
     if (Math.abs(x[i] - target) > band) settle = t[i] + DT;
   }
-  const settled = settle < run.cfg.duration * 0.98;
+  const settled = settle < (run.duration ?? run.cfg.duration) * 0.98;
   return {
     rise,
     overshoot: peak > 0 ? (peak / aT) * 100 : 0,

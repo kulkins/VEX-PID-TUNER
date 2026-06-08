@@ -166,6 +166,27 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .wp-edit input::placeholder { color: var(--muted); opacity: 0.6; }
 .robot-row { padding-bottom: 9px; margin-bottom: 7px; border-bottom: 1px dashed var(--border); }
 
+/* replay view */
+.telemetry {
+  width: 100%; min-height: 150px; resize: vertical; background: var(--bg-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums;
+}
+code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font: 11px ui-monospace, Menlo, monospace; }
+.metrics.mini-metrics { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.metrics.mini-metrics .metric { padding: 8px 10px; }
+.metrics.mini-metrics .num { font-size: 17px; }
+.suggest-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); margin-bottom: 6px; }
+.suggest { font-size: 12px; line-height: 1.5; padding: 7px 9px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 6px; }
+.suggest b { color: var(--accent); }
+
+/* learn view */
+.lessons { gap: 8px; }
+.lesson-btn.active { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #07070d; border-color: transparent; font-weight: 700; }
+.lesson-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; }
+.lesson-card h4 { margin: 0 0 6px; font-size: 14px; color: var(--accent); }
+.lesson-card p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text); }
+
 .footer { padding: 12px 22px; border-top: 1px solid var(--border); text-align: center; }
 
 .toast {
