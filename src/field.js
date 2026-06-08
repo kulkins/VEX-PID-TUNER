@@ -26,12 +26,14 @@ export class Field {
     // neighbours in real time (overriding manual drags) for a continuous path.
     this.smoothFactor = 1 / 6;
     this.autoSmooth = true;
-    // Follower: pure-pursuit params, hill-climbed across runs to shrink CTE.
+    // Follower: pure-pursuit params, grid-searched against the path so it tracks
+    // tightly and actually reaches the end (re-tunes live as the path changes).
     this.followDefault = { Ld: 20, vCruise: 38, Ksteer: 1.7 };
     this.follow = { ...this.followDefault };
-    this.autoTuneFollower = false;
-    this._tune = null;       // hill-climb state across runs
+    this.autoFollow = false;
+    this._tune = null;       // { best cost } from the last search
     this._lastPeak = null;   // peak cross-track error of the last run (in)
+    this._lastWobble = null; // weave count of the last run
 
     // Optional real game-field background (drop a field.png in the project).
     this.showField = true;
@@ -143,17 +145,19 @@ export class Field {
   }
   _up() {
     const d = this._drag; this._drag = null;
-    if (d && d.type === "add" && !d.moved) {
+    if (!d) return;
+    if (d.type === "add" && !d.moved) {
       this.points.push({ x: clamp(this._snap(d.x)), y: clamp(this._snap(d.y)), hx: 0, hy: 0, custom: false, heading: null });
       this.recomputeAutoHandles();
-      this.draw(); this.onChange(this.state());
     }
+    this.maybeAutoTune(); // re-tune the follower to the edited path, live
+    this.draw(); this.onChange(this.state());
   }
   _dbl(e) {
     const [x, y] = this._evIn(e);
     for (let i = this.points.length - 1; i >= 0; i--) {
       if (this._hit(x, y, this.points[i].x, this.points[i].y, 12)) {
-        this.points.splice(i, 1); this.recomputeAutoHandles(); this.draw(); this.onChange(this.state()); return;
+        this.points.splice(i, 1); this.recomputeAutoHandles(); this.maybeAutoTune(); this.draw(); this.onChange(this.state()); return;
       }
     }
   }
@@ -169,7 +173,7 @@ export class Field {
   setHeading(d) { this.robot.heading = ((d % 360) + 360) % 360; this.draw(); this.onChange(this.state()); }
   setSnap(on) { this.snap = on; }
   setShowField(on) { this.showField = on; this.draw(); }
-  setCurve(on) { this.curve = on; this.trail = null; if (on) this.recomputeAutoHandles(); this.draw(); }
+  setCurve(on) { this.curve = on; this.trail = null; if (on) this.recomputeAutoHandles(); this.maybeAutoTune(); this.draw(); }
   setSmoothFactor(f) { this.smoothFactor = f; if (this.autoSmooth) this.recomputeAutoHandles(); this.draw(); }
   setAutoSmooth(on) { this.autoSmooth = on; if (on) this.recomputeAutoHandles(); this.draw(); }
   // Reset both auto-tuners to defaults: re-enable live smoothing, clear manual
@@ -177,22 +181,64 @@ export class Field {
   resetTuner() {
     this.autoSmooth = true; this.smoothFactor = 1 / 6;
     this.points.forEach((p) => { p.custom = false; });
-    this.follow = { ...this.followDefault }; this._tune = null; this._lastPeak = null;
+    this.follow = { ...this.followDefault }; this._tune = null; this._lastPeak = null; this._lastWobble = null;
     this.recomputeAutoHandles(); this.draw(); this.onChange(this.state());
   }
-  // One hill-climb step per completed run: minimize peak cross-track error by
-  // nudging lookahead (Ld) then steering gain (Ksteer), reverting on regressions.
-  _tuneStep(peak) {
-    const t = this._tune || (this._tune = { best: Infinity, params: { ...this.follow }, axis: "Ld", dir: -1, step: { Ld: 4, Ksteer: 0.25 } });
-    if (peak < t.best - 0.02) {
-      t.best = peak; t.params = { ...this.follow }; // improvement → keep this direction
-    } else {
-      this.follow = { ...t.params }; // regression → revert, then flip dir / switch axis
-      if (t.dir === -1) t.dir = 1; else { t.dir = -1; t.axis = t.axis === "Ld" ? "Ksteer" : "Ld"; }
+  // Headless follower rollout — same pure-pursuit math as runPath but no drawing,
+  // so the tuner can score thousands of candidate gains instantly. Returns the
+  // peak cross-track error, weave count, and how far short of the end it stopped.
+  _rollout(Ld, Ksteer, vCruise) {
+    if (!this.points.length) return { peak: 0, wobble: 0, endErr: 0 };
+    const samples = this.curve ? this.sampledPath(26) : densify([{ x: this.robot.x, y: this.robot.y }, ...this.points], 10);
+    const arc = [0];
+    for (let i = 1; i < samples.length; i++) arc[i] = arc[i - 1] + dist(samples[i - 1], samples[i]);
+    const total = arc[arc.length - 1];
+    const rb = { x: this.robot.x, y: this.robot.y, heading: this.robot.heading };
+    const maxOmega = 200, dt = 0.02;
+    let t = 0, near = 0, peak = 0, wobble = 0, lastSide = 0, remaining = total;
+    while (t < 16) {
+      let bestD = Infinity, bestI = near;
+      for (let j = near; j < samples.length; j++) { const d = dist(rb, samples[j]); if (d < bestD) { bestD = d; bestI = j; } }
+      near = bestI; remaining = total - arc[near];
+      let li = near; while (li < samples.length - 1 && arc[li] - arc[near] < Ld) li++;
+      const tgt = samples[li];
+      const he = ((deg(Math.atan2(tgt.x - rb.x, tgt.y - rb.y)) - rb.heading + 540) % 360) - 180;
+      rb.heading = (rb.heading + Math.max(-maxOmega, Math.min(maxOmega, Ksteer * he)) * dt + 360) % 360;
+      let v = vCruise * Math.max(0, 1 - Math.abs(he) / 55);
+      if (remaining < 22) v *= Math.max(0.04, remaining / 22);
+      rb.x += Math.sin(rad(rb.heading)) * v * dt; rb.y += Math.cos(rad(rb.heading)) * v * dt;
+      t += dt;
+      let cte = Infinity, jB = near;
+      const lo = Math.max(0, near - 3), hi = Math.min(samples.length - 1, li + 3);
+      for (let j = lo; j < hi; j++) { const dd = segDist(rb, samples[j], samples[j + 1]); if (dd < cte) { cte = dd; jB = j; } }
+      if (cte > peak) peak = cte;
+      const a0 = samples[jB], b0 = samples[jB + 1];
+      const side = Math.sign((b0.x - a0.x) * (rb.y - a0.y) - (b0.y - a0.y) * (rb.x - a0.x));
+      if (cte > 0.3 && side !== 0) { if (lastSide && side !== lastSide) wobble++; lastSide = side; }
+      if (remaining < 1.5) break;
     }
-    if (t.axis === "Ld") this.follow.Ld = clampRange(this.follow.Ld + t.dir * t.step.Ld, 6, 40);
-    else this.follow.Ksteer = clampRange(this.follow.Ksteer + t.dir * t.step.Ksteer, 0.6, 3.5);
+    return { peak, wobble, endErr: Math.max(0, total - arc[near] - 1.5) };
   }
+  // Grid-search lookahead × steering for the lowest cost that still reaches the
+  // end. Cost: reaching dominates, then weaving, then tracking error.
+  autoTuneFollower() {
+    if (!this.points.length) return null;
+    const vC = this.followDefault.vCruise;
+    let best = null;
+    for (let Ld = 8; Ld <= 36.001; Ld += 4) {
+      for (let Ks = 0.8; Ks <= 3.0001; Ks += 0.3) {
+        const m = this._rollout(Ld, Ks, vC);
+        const cost = 3 * m.endErr + 0.4 * m.wobble + m.peak;
+        if (!best || cost < best.cost) best = { Ld, Ksteer: Ks, cost, m };
+      }
+    }
+    if (best) {
+      this.follow = { Ld: best.Ld, vCruise: vC, Ksteer: best.Ksteer };
+      this._tune = { best: best.cost };
+    }
+    return best;
+  }
+  maybeAutoTune() { if (this.autoFollow) this.autoTuneFollower(); }
   clearPoints() { this.stopPath(); this.points = []; this.trail = null; this.draw(); this.onChange(this.state()); }
   resetRobot() { this.stopPath(); this.robot.x = 0; this.robot.y = -48; this.robot.heading = 0; this.trail = null; this.recomputeAutoHandles(); this.draw(); this.onChange(this.state()); }
   state() { return { robot: { ...this.robot }, points: this.points.map((p) => ({ x: p.x, y: p.y, heading: p.heading })) }; }
@@ -205,7 +251,7 @@ export class Field {
       p.heading = (val == null || val === "" || Number.isNaN(val)) ? null : (((val % 360) + 360) % 360);
     } else if (key === "x" || key === "y") {
       if (Number.isNaN(val)) return;
-      p[key] = clamp(val); this.recomputeAutoHandles();
+      p[key] = clamp(val); this.recomputeAutoHandles(); this.maybeAutoTune();
     }
     this.draw();
   }
@@ -214,7 +260,7 @@ export class Field {
     if (x != null && !Number.isNaN(x)) this.robot.x = clamp(x);
     if (y != null && !Number.isNaN(y)) this.robot.y = clamp(y);
     if (heading != null && !Number.isNaN(heading)) this.robot.heading = ((heading % 360) + 360) % 360;
-    this.recomputeAutoHandles(); this.draw();
+    this.recomputeAutoHandles(); this.maybeAutoTune(); this.draw();
   }
 
   // ---- run path (pure-pursuit follower) ----
@@ -229,10 +275,14 @@ export class Field {
 
     this.trail = [{ x: start.x, y: start.y }];
     const { Ld, vCruise, Ksteer } = this.follow; const maxOmega = 200, dt = 0.02;
-    let t = 0, near = 0, done = false, peak = 0;
+    let t = 0, near = 0, done = false, peak = 0, wobble = 0, lastSide = 0;
     const step = () => {
       for (let k = 0; k < 2; k++) {
-        while (near < samples.length - 1 && dist(this.robot, samples[near + 1]) < dist(this.robot, samples[near])) near++;
+        // advance to the closest sample AHEAD (monotonic — never snaps backwards
+        // on a path that doubles back), so progress can't stall mid-route
+        let bestD = Infinity, bestI = near;
+        for (let j = near; j < samples.length; j++) { const d = dist(this.robot, samples[j]); if (d < bestD) { bestD = d; bestI = j; } }
+        near = bestI;
         const remaining = total - arc[near];
         let li = near; while (li < samples.length - 1 && arc[li] - arc[near] < Ld) li++;
         const tgt = samples[li];
@@ -245,18 +295,21 @@ export class Field {
         this.robot.x += Math.sin(rad(this.robot.heading)) * v * dt;
         this.robot.y += Math.cos(rad(this.robot.heading)) * v * dt;
         t += dt;
-        let cte = Infinity;
-        for (let j = 0; j < samples.length - 1; j++) { const dd = segDist(this.robot, samples[j], samples[j + 1]); if (dd < cte) cte = dd; }
+        let cte = Infinity, jBest = 0;
+        for (let j = 0; j < samples.length - 1; j++) { const dd = segDist(this.robot, samples[j], samples[j + 1]); if (dd < cte) { cte = dd; jBest = j; } }
         if (cte > peak) peak = cte;
+        // signed side of the path → count weaves (sign flips) as oscillation
+        const a0 = samples[jBest], b0 = samples[jBest + 1];
+        const side = Math.sign((b0.x - a0.x) * (this.robot.y - a0.y) - (b0.y - a0.y) * (this.robot.x - a0.x));
+        if (cte > 0.3 && side !== 0) { if (lastSide && side !== lastSide) wobble++; lastSide = side; }
         this.trail.push({ x: this.robot.x, y: this.robot.y });
-        onFrame && onFrame({ t, cte });
-        if (remaining < 1.2 || t > 16) { done = true; break; }
+        onFrame && onFrame({ t, cte, dist: arc[near], total }); // dist travelled vs target distance
+        if (remaining < 1.5 || t > 16) { done = true; break; } // arc-based: robust on looping paths
       }
       if (done) {
         this._anim = null;
         this.robot.x = start.x; this.robot.y = start.y; this.robot.heading = start.heading;
-        this._lastPeak = peak;
-        if (this.autoTuneFollower) this._tuneStep(peak); // learn for the next run
+        this._lastPeak = peak; this._lastWobble = wobble;
         this.draw(); this.onChange(this.state()); onDone && onDone(peak);
       } else { this.draw(); this._anim = requestAnimationFrame(step); }
     };

@@ -330,7 +330,14 @@ $("smooth").addEventListener("input", () => {
   field.setSmoothFactor(f);
 });
 $("autoSmooth").addEventListener("change", () => field.setAutoSmooth($("autoSmooth").checked));
-$("autoFollow").addEventListener("change", () => { field.autoTuneFollower = $("autoFollow").checked; renderFollowReadout(); });
+$("autoFollow").addEventListener("change", () => {
+  field.autoFollow = $("autoFollow").checked;
+  if (field.autoFollow) {
+    const b = field.autoTuneFollower(); // optimize against the current path now
+    if (b) toast(`Tuned follower → Ld ${b.Ld}", steer ${b.Ksteer.toFixed(1)}`);
+  }
+  renderFollowReadout();
+});
 $("resetTuner").addEventListener("click", () => {
   field.resetTuner();
   $("smooth").value = "0.17"; $("smoothVal").textContent = "0.17";
@@ -339,12 +346,11 @@ $("resetTuner").addEventListener("click", () => {
   toast("Auto-tuner reset to default");
 });
 function renderFollowReadout() {
-  const f = field.follow, peak = field._lastPeak;
-  const best = field._tune && field._tune.best !== Infinity ? field._tune.best : null;
+  const f = field.follow, peak = field._lastPeak, wob = field._lastWobble;
   $("followReadout").innerHTML =
     `Follower: lookahead <b>${f.Ld.toFixed(0)}"</b> · steer <b>${f.Ksteer.toFixed(2)}</b>` +
-    (peak != null ? `<br>last run peak CTE ${peak.toFixed(1)}"${best != null ? ` · best ${best.toFixed(1)}"` : ""}` : "") +
-    (field.autoTuneFollower ? `<br><span style="color:var(--ok)">learning from each run…</span>` : "");
+    (peak != null ? `<br>last run: peak CTE ${peak.toFixed(1)}" · ${wob || 0} weave${wob === 1 ? "" : "s"}` : "") +
+    (field.autoFollow ? `<br><span style="color:var(--ok)">auto-tuned to this path</span>` : "");
 }
 
 // Run the path: animate the robot following it + plot cross-track error.
@@ -354,16 +360,44 @@ $("runPath").addEventListener("click", () => {
   trackData = [];
   $("runPath").textContent = "■ Stop";
   field.runPath(
-    (f) => { trackData.push(f); drawTrack(); },
+    (f) => { trackData.push(f); drawTrack(); drawDist(); },
     () => {
       $("runPath").textContent = "▶ Run path";
+      const last = trackData[trackData.length - 1];
       const maxC = trackData.reduce((m, d) => Math.max(m, d.cte), 0);
-      $("trackVal").textContent = trackData.length ? `peak ${maxC.toFixed(1)} in · final ${trackData[trackData.length - 1].cte.toFixed(1)} in` : "";
+      $("trackVal").textContent = trackData.length ? `peak ${maxC.toFixed(1)} in · final ${last.cte.toFixed(1)} in` : "";
+      if (last) $("distVal").textContent = `reached ${last.dist.toFixed(0)} / ${last.total.toFixed(0)} in`;
       renderFollowReadout();
-      if (field.autoTuneFollower) toast(`Auto-tuned follower → Ld ${field.follow.Ld.toFixed(0)}", steer ${field.follow.Ksteer.toFixed(2)}`);
     }
   );
 });
+
+// Distance travelled (progress along the path) vs the target distance — the
+// position "setpoint". Reaching the dashed line = it got to the spot; a flat
+// shortfall = it stopped short; a stair-step = it stalled / weaved.
+function drawDist() {
+  const c = $("distChart"), ctx = c.getContext("2d");
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = c.clientWidth, H = c.clientHeight;
+  c.width = W * dpr; c.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const mL = 34, mB = 16, mT = 6, mR = 8, pw = W - mL - mR, ph = H - mT - mB;
+  const tMax = Math.max(2, trackData.length ? trackData[trackData.length - 1].t : 2);
+  const total = Math.max(1, trackData.length ? trackData[trackData.length - 1].total : 1);
+  const yMax = total * 1.08;
+  const Y = (v) => mT + ph - (v / yMax) * ph, X = (t) => mL + (t / tMax) * pw;
+  ctx.strokeStyle = "rgba(255,255,255,0.07)"; ctx.fillStyle = "#9b9cc6"; ctx.font = "10px system-ui";
+  for (let g = 0; g <= 2; g++) { const v = (g / 2) * yMax, y = Y(v); ctx.beginPath(); ctx.moveTo(mL, y); ctx.lineTo(W - mR, y); ctx.stroke(); ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText(v.toFixed(0), mL - 5, y); }
+  ctx.textAlign = "left"; ctx.textBaseline = "bottom"; ctx.fillText("in", 4, mT + 10);
+  ctx.textAlign = "right"; ctx.textBaseline = "bottom"; ctx.fillText(tMax.toFixed(1) + "s", W - mR, H);
+  // target distance (setpoint)
+  ctx.strokeStyle = "rgba(170,178,255,0.85)"; ctx.setLineDash([6, 5]); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(mL, Y(total)); ctx.lineTo(W - mR, Y(total)); ctx.stroke(); ctx.setLineDash([]);
+  // distance travelled
+  ctx.strokeStyle = "#aab2ff"; ctx.lineWidth = 2; ctx.beginPath();
+  trackData.forEach((d, i) => { const x = X(d.t), y = Y(Math.min(d.dist, yMax)); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+  ctx.stroke();
+}
 
 function drawTrack() {
   const c = $("trackChart"), ctx = c.getContext("2d");
@@ -473,7 +507,7 @@ $("copyPath").addEventListener("click", async () => {
 
 // keep the field's heading slider in sync when the robot is rotated by dragging
 const origRender = renderFieldReadout;
-field.onChange = (s) => { origRender(s); $("heading").value = Math.round(s.robot.heading); $("headingVal").textContent = Math.round(s.robot.heading) + "°"; };
+field.onChange = (s) => { origRender(s); $("heading").value = Math.round(s.robot.heading); $("headingVal").textContent = Math.round(s.robot.heading) + "°"; renderFollowReadout(); };
 renderFollowReadout();
 
 // ===================== Replay view (tune from real telemetry) =====================

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>VEX PID Tuner + Field Planner</title>
-    <link rel="stylesheet" href="./style.css?v=11" />
+    <link rel="stylesheet" href="./style.css?v=12" />
   </head>
   <body>
     <header class="topbar">
@@ -131,7 +131,9 @@
       <section class="stage">
         <div class="field-wrap"><canvas id="field"></canvas></div>
         <div class="track">
-          <div class="track-head"><span>Path tracking — cross-track error</span><span id="trackVal" class="muted small"></span></div>
+          <div class="track-head"><span>Distance travelled vs target</span><span id="distVal" class="muted small"></span></div>
+          <canvas id="distChart"></canvas>
+          <div class="track-head" style="margin-top:10px"><span>Path tracking — cross-track error</span><span id="trackVal" class="muted small"></span></div>
           <canvas id="trackChart"></canvas>
         </div>
       </section>
