@@ -89,12 +89,13 @@ trustworthy — it's the JerryIO-style "draw a path, paste it into your auto" fl
 - **Curve smoothing** — each waypoint's Bézier handles are re-derived from its
   neighbours in real time for a continuous path; a slider sets how round, and
   turning off *auto-smooth* lets you drag handles by hand instead.
-- **Follower** — turn on *auto-tune follower* and it grid-searches the
+- **Follower** — *auto-tune follower* (on by default) grid-searches the
   pure-pursuit lookahead and steering gain against the current path (re-tuning
-  live as you edit) for the gains that track tightest **and actually reach the
-  end** — the cost punishes stopping short and weaving, not just cross-track
-  error. **Run path** then plots **distance travelled vs target distance** (does
-  it reach the spot?) alongside cross-track error (does it weave?).
+  live as you edit) for gains that **reach the end, hit every waypoint, and don't
+  weave** — it specifically penalizes corner-cutting, since a big lookahead skips
+  points. **Run path** then plots **distance travelled vs target distance** (did
+  it reach the spot?) alongside cross-track error (did it weave?), and the readout
+  shows the worst waypoint miss.
 
 **↺ Reset auto-tuner** restores both to defaults.
 

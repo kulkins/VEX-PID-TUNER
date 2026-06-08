@@ -346,11 +346,12 @@ $("resetTuner").addEventListener("click", () => {
   toast("Auto-tuner reset to default");
 });
 function renderFollowReadout() {
-  const f = field.follow, peak = field._lastPeak, wob = field._lastWobble;
+  const f = field.follow, peak = field._lastPeak, wob = field._lastWobble, miss = field._lastMiss;
+  const missCol = miss == null ? "" : miss < 2 ? "var(--ok)" : miss < 5 ? "var(--warn)" : "var(--danger)";
   $("followReadout").innerHTML =
     `Follower: lookahead <b>${f.Ld.toFixed(0)}"</b> · steer <b>${f.Ksteer.toFixed(2)}</b>` +
-    (peak != null ? `<br>last run: peak CTE ${peak.toFixed(1)}" · ${wob || 0} weave${wob === 1 ? "" : "s"}` : "") +
-    (field.autoFollow ? `<br><span style="color:var(--ok)">auto-tuned to this path</span>` : "");
+    (peak != null ? `<br>last run: worst miss <span style="color:${missCol}">${miss.toFixed(1)}"</span> · ${wob || 0} weave${wob === 1 ? "" : "s"} · peak CTE ${peak.toFixed(1)}"` : "") +
+    (field.autoFollow ? `<br><span style="color:var(--ok)">auto-tuned to hit the points</span>` : "");
 }
 
 // Run the path: animate the robot following it + plot cross-track error.

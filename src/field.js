@@ -30,10 +30,11 @@ export class Field {
     // tightly and actually reaches the end (re-tunes live as the path changes).
     this.followDefault = { Ld: 20, vCruise: 38, Ksteer: 1.7 };
     this.follow = { ...this.followDefault };
-    this.autoFollow = false;
+    this.autoFollow = true;
     this._tune = null;       // { best cost } from the last search
     this._lastPeak = null;   // peak cross-track error of the last run (in)
     this._lastWobble = null; // weave count of the last run
+    this._lastMiss = null;   // worst waypoint miss of the last run (in)
 
     // Optional real game-field background (drop a field.png in the project).
     this.showField = true;
@@ -181,24 +182,27 @@ export class Field {
   resetTuner() {
     this.autoSmooth = true; this.smoothFactor = 1 / 6;
     this.points.forEach((p) => { p.custom = false; });
-    this.follow = { ...this.followDefault }; this._tune = null; this._lastPeak = null; this._lastWobble = null;
+    this.follow = { ...this.followDefault }; this._tune = null; this._lastPeak = null; this._lastWobble = null; this._lastMiss = null;
     this.recomputeAutoHandles(); this.draw(); this.onChange(this.state());
   }
   // Headless follower rollout — same pure-pursuit math as runPath but no drawing,
   // so the tuner can score thousands of candidate gains instantly. Returns the
-  // peak cross-track error, weave count, and how far short of the end it stopped.
+  // peak cross-track error, weave count, how far short of the end it stopped, and
+  // the worst waypoint miss (closest the robot got to each waypoint).
   _rollout(Ld, Ksteer, vCruise) {
-    if (!this.points.length) return { peak: 0, wobble: 0, endErr: 0 };
+    if (!this.points.length) return { peak: 0, wobble: 0, endErr: 0, miss: 0 };
     const samples = this.curve ? this.sampledPath(26) : densify([{ x: this.robot.x, y: this.robot.y }, ...this.points], 10);
     const arc = [0];
     for (let i = 1; i < samples.length; i++) arc[i] = arc[i - 1] + dist(samples[i - 1], samples[i]);
     const total = arc[arc.length - 1];
     const rb = { x: this.robot.x, y: this.robot.y, heading: this.robot.heading };
+    const pts = this.points, miss = pts.map(() => Infinity);
     const maxOmega = 200, dt = 0.02;
     let t = 0, near = 0, peak = 0, wobble = 0, lastSide = 0, remaining = total;
     while (t < 16) {
       let bestD = Infinity, bestI = near;
-      for (let j = near; j < samples.length; j++) { const d = dist(rb, samples[j]); if (d < bestD) { bestD = d; bestI = j; } }
+      const hiN = Math.min(samples.length, near + 30);
+      for (let j = near; j < hiN; j++) { const d = dist(rb, samples[j]); if (d < bestD) { bestD = d; bestI = j; } }
       near = bestI; remaining = total - arc[near];
       let li = near; while (li < samples.length - 1 && arc[li] - arc[near] < Ld) li++;
       const tgt = samples[li];
@@ -208,6 +212,7 @@ export class Field {
       if (remaining < 22) v *= Math.max(0.04, remaining / 22);
       rb.x += Math.sin(rad(rb.heading)) * v * dt; rb.y += Math.cos(rad(rb.heading)) * v * dt;
       t += dt;
+      for (let k = 0; k < pts.length; k++) { const d = dist(rb, pts[k]); if (d < miss[k]) miss[k] = d; }
       let cte = Infinity, jB = near;
       const lo = Math.max(0, near - 3), hi = Math.min(samples.length - 1, li + 3);
       for (let j = lo; j < hi; j++) { const dd = segDist(rb, samples[j], samples[j + 1]); if (dd < cte) { cte = dd; jB = j; } }
@@ -217,18 +222,19 @@ export class Field {
       if (cte > 0.3 && side !== 0) { if (lastSide && side !== lastSide) wobble++; lastSide = side; }
       if (remaining < 1.5) break;
     }
-    return { peak, wobble, endErr: Math.max(0, total - arc[near] - 1.5) };
+    return { peak, wobble, endErr: Math.max(0, total - arc[near] - 1.5), miss: Math.max(0, ...miss) };
   }
-  // Grid-search lookahead × steering for the lowest cost that still reaches the
-  // end. Cost: reaching dominates, then weaving, then tracking error.
+  // Grid-search lookahead × steering for the lowest cost. Cost order: reach the
+  // end → hit every waypoint → don't weave → low cross-track error. Hitting the
+  // points is weighted heavily because a small lookahead is what cuts corners.
   autoTuneFollower() {
     if (!this.points.length) return null;
     const vC = this.followDefault.vCruise;
     let best = null;
-    for (let Ld = 8; Ld <= 36.001; Ld += 4) {
+    for (let Ld = 4; Ld <= 36.001; Ld += 4) {
       for (let Ks = 0.8; Ks <= 3.0001; Ks += 0.3) {
         const m = this._rollout(Ld, Ks, vC);
-        const cost = 3 * m.endErr + 0.4 * m.wobble + m.peak;
+        const cost = 3 * m.endErr + 1.3 * m.miss + 0.4 * m.wobble + 0.3 * m.peak;
         if (!best || cost < best.cost) best = { Ld, Ksteer: Ks, cost, m };
       }
     }
@@ -275,13 +281,16 @@ export class Field {
 
     this.trail = [{ x: start.x, y: start.y }];
     const { Ld, vCruise, Ksteer } = this.follow; const maxOmega = 200, dt = 0.02;
+    const miss = this.points.map(() => Infinity);
     let t = 0, near = 0, done = false, peak = 0, wobble = 0, lastSide = 0;
     const step = () => {
       for (let k = 0; k < 2; k++) {
-        // advance to the closest sample AHEAD (monotonic — never snaps backwards
-        // on a path that doubles back), so progress can't stall mid-route
+        // advance to the closest sample within a LOCAL window ahead — monotonic,
+        // and (unlike a global search) it won't teleport across a path that
+        // loops back over itself, which would skip waypoints.
         let bestD = Infinity, bestI = near;
-        for (let j = near; j < samples.length; j++) { const d = dist(this.robot, samples[j]); if (d < bestD) { bestD = d; bestI = j; } }
+        const hiN = Math.min(samples.length, near + 30);
+        for (let j = near; j < hiN; j++) { const d = dist(this.robot, samples[j]); if (d < bestD) { bestD = d; bestI = j; } }
         near = bestI;
         const remaining = total - arc[near];
         let li = near; while (li < samples.length - 1 && arc[li] - arc[near] < Ld) li++;
@@ -302,6 +311,7 @@ export class Field {
         const a0 = samples[jBest], b0 = samples[jBest + 1];
         const side = Math.sign((b0.x - a0.x) * (this.robot.y - a0.y) - (b0.y - a0.y) * (this.robot.x - a0.x));
         if (cte > 0.3 && side !== 0) { if (lastSide && side !== lastSide) wobble++; lastSide = side; }
+        for (let m = 0; m < this.points.length; m++) { const d = dist(this.robot, this.points[m]); if (d < miss[m]) miss[m] = d; }
         this.trail.push({ x: this.robot.x, y: this.robot.y });
         onFrame && onFrame({ t, cte, dist: arc[near], total }); // dist travelled vs target distance
         if (remaining < 1.5 || t > 16) { done = true; break; } // arc-based: robust on looping paths
@@ -309,7 +319,7 @@ export class Field {
       if (done) {
         this._anim = null;
         this.robot.x = start.x; this.robot.y = start.y; this.robot.heading = start.heading;
-        this._lastPeak = peak; this._lastWobble = wobble;
+        this._lastPeak = peak; this._lastWobble = wobble; this._lastMiss = Math.max(0, ...miss);
         this.draw(); this.onChange(this.state()); onDone && onDone(peak);
       } else { this.draw(); this._anim = requestAnimationFrame(step); }
     };
